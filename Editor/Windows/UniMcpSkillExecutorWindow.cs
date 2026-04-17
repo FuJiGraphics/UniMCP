@@ -153,10 +153,10 @@ namespace UniMCP.Editor.Windows
                     DragAndDrop.AcceptDrag();
                     foreach (var obj in DragAndDrop.objectReferences)
                     {
-                        if (obj == null) continue;
-                        if (_targets.Contains(obj)) continue;
-                        if (string.IsNullOrEmpty(AssetDatabase.GetAssetPath(obj))) continue;
-                        _targets.Add(obj);
+                        var resolved = ResolveToAsset(obj);
+                        if (resolved == null) continue;
+                        if (_targets.Contains(resolved)) continue;
+                        _targets.Add(resolved);
                     }
                     evt.Use();
                     Repaint();
@@ -214,17 +214,35 @@ namespace UniMCP.Editor.Windows
         {
             foreach (var o in Selection.objects)
             {
-                if (o == null)
+                var resolved = ResolveToAsset(o);
+                if (resolved == null)
                     continue;
-                if (_targets.Contains(o))
+                if (_targets.Contains(resolved))
                     continue;
-
-                var path = AssetDatabase.GetAssetPath(o);
-                if (string.IsNullOrEmpty(path))
-                    continue;
-
-                _targets.Add(o);
+                _targets.Add(resolved);
             }
+        }
+
+        private static UnityEngine.Object ResolveToAsset(UnityEngine.Object obj)
+        {
+            if (obj == null)
+                return null;
+
+            if (!string.IsNullOrEmpty(AssetDatabase.GetAssetPath(obj)))
+                return obj;
+
+            if (obj is GameObject go)
+            {
+                var source = PrefabUtility.GetCorrespondingObjectFromOriginalSource(go);
+                if (source != null)
+                {
+                    var path = AssetDatabase.GetAssetPath(source);
+                    if (!string.IsNullOrEmpty(path))
+                        return AssetDatabase.LoadAssetAtPath<GameObject>(path);
+                }
+            }
+
+            return null;
         }
 
         private void DrawRunBar()
@@ -254,13 +272,17 @@ namespace UniMCP.Editor.Windows
             {
                 if (_isRunning)
                 {
+                    var elapsed = EditorApplication.timeSinceStartup - _runStartedAt;
                     var dots = new string('.', _thinkingDots);
                     var thinkingStyle = new GUIStyle(EditorStyles.label)
                     {
                         fontStyle = FontStyle.Italic,
                         normal = { textColor = new Color(0.70f, 0.70f, 0.70f) },
                     };
-                    EditorGUILayout.LabelField($"Running{dots}", thinkingStyle);
+                    EditorGUILayout.LabelField($"Running{dots}  ({elapsed:F0}s)", thinkingStyle);
+                    EditorGUILayout.LabelField(
+                        "프리팹 자식 트리 전체를 스캔·리네임할 경우 30초~수 분 걸릴 수 있습니다.",
+                        EditorStyles.miniLabel);
                     return;
                 }
 
