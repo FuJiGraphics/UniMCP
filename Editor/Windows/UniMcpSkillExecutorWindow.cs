@@ -321,17 +321,14 @@ namespace UniMCP.Editor.Windows
 
         private string BuildPrompt(string skillName)
         {
-            var sb = new StringBuilder();
-            sb.AppendLine($"/{skillName}");
-            sb.AppendLine();
-            sb.AppendLine("Targets:");
+            var paths = new List<string>();
             foreach (var t in _targets)
             {
                 var path = AssetDatabase.GetAssetPath(t);
                 if (!string.IsNullOrEmpty(path))
-                    sb.AppendLine($"- {path}");
+                    paths.Add(path);
             }
-            return sb.ToString();
+            return $"/{skillName} Targets: {string.Join(", ", paths)}";
         }
     }
 }
