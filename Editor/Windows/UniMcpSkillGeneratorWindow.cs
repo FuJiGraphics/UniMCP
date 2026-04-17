@@ -40,9 +40,9 @@ namespace UniMCP.Editor.Windows
                 return;
             }
 
-            var anchor = (EditorWindow)DockUtil.FindFirstOpen<UniMcpWindow>()
-                      ?? DockUtil.FindFirstOpen<UniMcpSettingsWindow>()
-                      ?? DockUtil.FindFirstOpen<UniMcpSkillExecutorWindow>();
+            EditorWindow anchor = DockUtil.FindFirstOpen<UniMcpWindow>();
+            if (anchor == null) anchor = DockUtil.FindFirstOpen<UniMcpSettingsWindow>();
+            if (anchor == null) anchor = DockUtil.FindFirstOpen<UniMcpSkillExecutorWindow>();
 
             if (anchor == null)
             {
