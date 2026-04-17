@@ -41,6 +41,7 @@ namespace UniMCP.Editor.Windows
         private string _renameTarget;
         private string _renameBuffer;
         private bool _renameFocusPending;
+        private bool _pendingRenameCommit;
 
         private class TreeNode
         {
@@ -103,6 +104,14 @@ namespace UniMCP.Editor.Windows
 
         private void OnGUI()
         {
+            HandleGlobalShortcuts();
+
+            if (_pendingRenameCommit && Event.current.type == EventType.Layout)
+            {
+                _pendingRenameCommit = false;
+                CommitRename();
+            }
+
             DrawToolbar();
 
             using (new EditorGUILayout.HorizontalScope(GUILayout.ExpandHeight(true)))
@@ -115,6 +124,23 @@ namespace UniMCP.Editor.Windows
             }
 
             DrawStatusBar();
+        }
+
+        private void HandleGlobalShortcuts()
+        {
+            var e = Event.current;
+            if (e.type != EventType.KeyDown)
+                return;
+
+            if (e.keyCode == KeyCode.F2
+                && _renameTarget == null
+                && _selectedSkillIdx >= 0
+                && !string.IsNullOrEmpty(_selectedFilePath)
+                && _selectedFilePath != SkillMdPath)
+            {
+                BeginRename(_selectedFilePath);
+                e.Use();
+            }
         }
 
         private void DrawToolbar()
@@ -271,7 +297,7 @@ namespace UniMCP.Editor.Windows
 
                 var skill = _skillsBuffer[_selectedSkillIdx];
 
-                DrawTreeToolbar(skill);
+                DrawTreeHint();
 
                 _treeScroll = EditorGUILayout.BeginScrollView(_treeScroll, GUILayout.ExpandHeight(true));
 
@@ -281,46 +307,35 @@ namespace UniMCP.Editor.Windows
                 foreach (var node in tree)
                     DrawTreeNodeRecursive(node, depth: 0);
 
+                DrawTreeRootDropZone(skill);
+
                 EditorGUILayout.EndScrollView();
-
-                DrawTreeSelectedBar(skill);
             }
         }
 
-        private void DrawTreeToolbar(UniMcpSkill skill)
+        private void DrawTreeHint()
         {
             using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
             {
-                if (GUILayout.Button("+ File", EditorStyles.toolbarButton, GUILayout.Width(60)))
-                    BeginAddItem(skill, isFolder: false);
-                if (GUILayout.Button("+ Folder", EditorStyles.toolbarButton, GUILayout.Width(70)))
-                    BeginAddItem(skill, isFolder: true);
+                var style = new GUIStyle(EditorStyles.miniLabel)
+                {
+                    normal = { textColor = ColorMuted },
+                    alignment = TextAnchor.MiddleLeft,
+                };
+                GUILayout.Label("우클릭·F2·드래그앤드롭", style);
                 GUILayout.FlexibleSpace();
             }
         }
 
-        private void DrawTreeSelectedBar(UniMcpSkill skill)
+        private void DrawTreeRootDropZone(UniMcpSkill skill)
         {
-            using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
-            {
-                var label = _selectedFilePath == SkillMdPath
-                    ? "SKILL.md (pinned)"
-                    : _selectedFilePath ?? "(none)";
+            var fillRect = GUILayoutUtility.GetRect(
+                0, 60,
+                GUILayout.ExpandWidth(true),
+                GUILayout.ExpandHeight(true));
 
-                var style = new GUIStyle(EditorStyles.miniLabel) { alignment = TextAnchor.MiddleLeft };
-                GUILayout.Label(label, style);
-                GUILayout.FlexibleSpace();
-
-                var canModify = !string.IsNullOrEmpty(_selectedFilePath)
-                    && _selectedFilePath != SkillMdPath;
-
-                GUI.enabled = canModify;
-                if (GUILayout.Button("Rename", EditorStyles.toolbarButton, GUILayout.Width(60)))
-                    BeginRename(_selectedFilePath);
-                if (GUILayout.Button("Delete", EditorStyles.toolbarButton, GUILayout.Width(60)))
-                    DeleteSelected(skill);
-                GUI.enabled = true;
-            }
+            HandleRowDragDrop(skill, fillRect, "");
+            HandleRowContextMenu(skill, fillRect, path: "", isFolder: true, isPinned: false);
         }
 
         private void DrawTreeNodeRecursive(TreeNode node, int depth)
@@ -340,6 +355,7 @@ namespace UniMCP.Editor.Windows
             var rect = GUILayoutUtility.GetRect(0, TreeRowHeight, GUILayout.ExpandWidth(true));
             var selected = _selectedFilePath == path;
             var dirty = IsFileDirty(path);
+            var skill = _skillsBuffer[_selectedSkillIdx];
 
             if (selected)
                 EditorGUI.DrawRect(rect, ColorBgCardSelected);
@@ -392,6 +408,14 @@ namespace UniMCP.Editor.Windows
                         evt.Use();
                     }
                 }
+
+                if (Event.current.type == EventType.Repaint
+                    && !_renameFocusPending
+                    && GUI.GetNameOfFocusedControl() != "RenameField")
+                {
+                    _pendingRenameCommit = true;
+                    Repaint();
+                }
             }
             else
             {
@@ -425,6 +449,149 @@ namespace UniMCP.Editor.Windows
                 GUI.FocusControl(null);
                 Repaint();
             }
+
+            HandleRowDragDrop(skill, rect, isFolder ? path : GetParentFolder(path));
+            HandleRowContextMenu(skill, rect, path, isFolder, isPinned);
+        }
+
+        private static string GetParentFolder(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return "";
+            var slash = path.LastIndexOf('/');
+            return slash < 0 ? "" : path.Substring(0, slash);
+        }
+
+        private void HandleRowDragDrop(UniMcpSkill skill, Rect rect, string targetFolder)
+        {
+            var evt = Event.current;
+            if (evt.type != EventType.DragUpdated && evt.type != EventType.DragPerform)
+                return;
+            if (!rect.Contains(evt.mousePosition))
+                return;
+
+            DragAndDrop.visualMode = DragAndDropVisualMode.Copy;
+
+            if (evt.type == EventType.DragPerform)
+            {
+                DragAndDrop.AcceptDrag();
+                ImportDroppedFiles(skill, targetFolder);
+                evt.Use();
+                Repaint();
+            }
+            else
+            {
+                evt.Use();
+            }
+        }
+
+        private void HandleRowContextMenu(UniMcpSkill skill, Rect rect, string path, bool isFolder, bool isPinned)
+        {
+            var evt = Event.current;
+            if (evt.type != EventType.ContextClick)
+                return;
+            if (!rect.Contains(evt.mousePosition))
+                return;
+
+            if (!string.IsNullOrEmpty(path))
+                _selectedFilePath = path;
+
+            ShowContextMenu(skill, path, isFolder, isPinned);
+            evt.Use();
+        }
+
+        private void ShowContextMenu(UniMcpSkill skill, string path, bool isFolder, bool isPinned)
+        {
+            var menu = new GenericMenu();
+
+            string parent;
+            if (string.IsNullOrEmpty(path) || path == SkillMdPath)
+                parent = "";
+            else if (isFolder)
+                parent = path;
+            else
+                parent = GetParentFolder(path);
+
+            menu.AddItem(new GUIContent("+ New File"), false, () => BeginAddItem(skill, false, parent));
+            menu.AddItem(new GUIContent("+ New Folder"), false, () => BeginAddItem(skill, true, parent));
+
+            if (!isPinned && !string.IsNullOrEmpty(path))
+            {
+                menu.AddSeparator("");
+                menu.AddItem(new GUIContent("Rename  F2"), false, () => BeginRename(path));
+                menu.AddItem(new GUIContent("Delete"), false, () =>
+                {
+                    _selectedFilePath = path;
+                    DeleteSelected(skill);
+                });
+            }
+
+            menu.ShowAsContext();
+        }
+
+        private void ImportDroppedFiles(UniMcpSkill skill, string parentFolder)
+        {
+            foreach (var obj in DragAndDrop.objectReferences)
+            {
+                if (obj == null) continue;
+                var assetPath = UnityEditor.AssetDatabase.GetAssetPath(obj);
+                if (string.IsNullOrEmpty(assetPath)) continue;
+                if (!System.IO.File.Exists(assetPath)) continue;
+
+                string content;
+                try { content = System.IO.File.ReadAllText(assetPath); }
+                catch { continue; }
+
+                var filename = System.IO.Path.GetFileName(assetPath);
+                var target = string.IsNullOrEmpty(parentFolder)
+                    ? filename
+                    : parentFolder + "/" + filename;
+
+                int n = 2;
+                var baseName = System.IO.Path.GetFileNameWithoutExtension(filename);
+                var ext = System.IO.Path.GetExtension(filename);
+                while (IsPathTaken(skill, target))
+                {
+                    var next = $"{baseName}-{n}{ext}";
+                    target = string.IsNullOrEmpty(parentFolder) ? next : parentFolder + "/" + next;
+                    n++;
+                }
+
+                skill.files.Add(new UniMcpSkillFile { path = target, content = content });
+            }
+
+            foreach (var dropped in DragAndDrop.paths ?? Array.Empty<string>())
+            {
+                if (DragAndDrop.objectReferences.Any(o =>
+                        UnityEditor.AssetDatabase.GetAssetPath(o) == dropped))
+                    continue;
+
+                if (!System.IO.File.Exists(dropped))
+                    continue;
+
+                string content;
+                try { content = System.IO.File.ReadAllText(dropped); }
+                catch { continue; }
+
+                var filename = System.IO.Path.GetFileName(dropped);
+                var target = string.IsNullOrEmpty(parentFolder)
+                    ? filename
+                    : parentFolder + "/" + filename;
+
+                int n = 2;
+                var baseName = System.IO.Path.GetFileNameWithoutExtension(filename);
+                var ext = System.IO.Path.GetExtension(filename);
+                while (IsPathTaken(skill, target))
+                {
+                    var next = $"{baseName}-{n}{ext}";
+                    target = string.IsNullOrEmpty(parentFolder) ? next : parentFolder + "/" + next;
+                    n++;
+                }
+
+                skill.files.Add(new UniMcpSkillFile { path = target, content = content });
+            }
+
+            if (!string.IsNullOrEmpty(parentFolder) && !_expandedFolders.Contains(parentFolder))
+                _expandedFolders.Add(parentFolder);
         }
 
         private bool IsExpanded(string folderPath)
@@ -505,9 +672,9 @@ namespace UniMCP.Editor.Windows
                 SortRecursive(c);
         }
 
-        private void BeginAddItem(UniMcpSkill skill, bool isFolder)
+        private void BeginAddItem(UniMcpSkill skill, bool isFolder, string parent = null)
         {
-            var parent = GetSelectedFolderPath();
+            parent = parent ?? GetSelectedFolderPath();
             var defaultName = isFolder ? "new-folder" : "new-file.md";
 
             var newPath = string.IsNullOrEmpty(parent) ? defaultName : parent + "/" + defaultName;
