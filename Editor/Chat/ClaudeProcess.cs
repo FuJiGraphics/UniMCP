@@ -42,11 +42,11 @@ namespace UniMCP.Editor.Chat
         }
 
         private const string ScopeSystemPrompt =
-            "You are a Unity project assistant strictly scoped to the Unity project at the current working directory. " +
+            "You are a Unity project assistant strictly scoped to the current Unity project and its manifest-linked dependencies. " +
             "Hard rules:\n" +
-            "1. Never read, list, write, or access any file or directory outside the working directory (the Unity project root).\n" +
-            "2. Accessible paths are limited to the project's Assets/, Packages/, ProjectSettings/, Library/, UserSettings/ and their subdirectories.\n" +
-            "3. If the user asks about paths like ~, /Users, /home, Desktop, C:/, or any absolute path outside this project, refuse briefly and state the scope limit.\n" +
+            "1. Accessible paths: the Unity project root at the working directory (Assets/, Packages/, ProjectSettings/, Library/, UserSettings/, etc.) and any directory explicitly passed via --add-dir (these are packages referenced by the project's manifest.json).\n" +
+            "2. Never read, list, write, or access paths outside these allowed roots.\n" +
+            "3. If asked about paths like ~, /Users, /home, Desktop, or any absolute path not in the allowed roots, refuse briefly and state the scope limit.\n" +
             "4. Do not invoke WebFetch or WebSearch.\n" +
             "5. Treat this Unity project as the only context. Do not reference unrelated projects or external systems.";
 
@@ -68,10 +68,16 @@ namespace UniMCP.Editor.Chat
 
             var escapedPrompt = EscapeArg(prompt);
             var escapedScope = EscapeArg(ScopeSystemPrompt);
+
+            var addDirParts = new StringBuilder();
+            foreach (var dir in ManifestResolver.GetExternalPackageDirs(workingDir))
+                addDirParts.Append(" --add-dir ").Append(EscapeArg(dir));
+
             var claudeArgs =
                 $"-p {escapedPrompt} " +
                 $"--append-system-prompt {escapedScope} " +
-                $"--disallowedTools \"{DisallowedTools}\"";
+                $"--disallowedTools \"{DisallowedTools}\"" +
+                addDirParts;
 
             if (isWin)
             {
