@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reflection;
+using UniMCP.Editor.Chat;
 using UniMCP.Editor.Settings;
 using UnityEditor;
 using UnityEngine;
@@ -10,9 +12,8 @@ namespace UniMCP.Editor.Windows
 {
     /// <summary>
     /// Project 창 우클릭 메뉴에 UniMCP 스킬을 개별 서브메뉴로 동적 등록한다.
-    /// Unity internal `Menu.AddMenuItem` / `Menu.RemoveMenuItem`을 Reflection으로 호출한다.
-    /// 도메인 리로드 및 스킬 저장 시 자동으로 다시 구성된다.
-    /// Reflection 실패 시(Unity 내부 API 변경) 단일 picker 엔트리로 폴백한다
+    /// 선택된 스킬은 창을 열지 않고 백그라운드에서 바로 실행되며 진행 상황은 Unity Progress 윈도우에 표시된다.
+    /// 내부 `Menu.AddMenuItem` API 변경 시 단일 picker 엔트리로 폴백한다
     /// </summary>
     [InitializeOnLoad]
     public static class UniMcpAssetMenu
@@ -47,7 +48,7 @@ namespace UniMCP.Editor.Windows
             {
                 var captured = skill;
                 var path = MenuRoot + EscapeMenuPath(skill.name);
-                if (!TryAddMenuItem(path, priority++, () => RunSkill(captured), HasAssetSelection))
+                if (!TryAddMenuItem(path, priority++, () => RunSkillAsync(captured), HasAssetSelection))
                 {
                     dynamicOk = false;
                     break;
@@ -128,7 +129,7 @@ namespace UniMCP.Editor.Windows
             foreach (var skill in skills)
             {
                 var captured = skill;
-                menu.AddItem(new GUIContent(skill.name), false, () => RunSkill(captured));
+                menu.AddItem(new GUIContent(skill.name), false, () => RunSkillAsync(captured));
             }
             menu.ShowAsContext();
         }
@@ -145,10 +146,41 @@ namespace UniMCP.Editor.Windows
                     && !string.IsNullOrEmpty(AssetDatabase.GetAssetPath(o)));
         }
 
-        private static void RunSkill(UniMcpSkill skill)
+        private static async void RunSkillAsync(UniMcpSkill skill)
         {
-            var window = UniMcpSkillExecutorWindow.GetOrCreateWindow();
-            window.PresetAndRun(skill, Selection.objects);
+            var paths = new List<string>();
+            foreach (var o in Selection.objects ?? Array.Empty<UnityEngine.Object>())
+            {
+                var resolved = UniMcpSkillExecutorWindow.ResolveToAsset(o);
+                if (resolved == null) continue;
+                var p = AssetDatabase.GetAssetPath(resolved);
+                if (!string.IsNullOrEmpty(p) && !paths.Contains(p))
+                    paths.Add(p);
+            }
+
+            if (paths.Count == 0)
+                return;
+
+            var invocation = SkillStore.GetInvocationName(skill.name);
+            var prompt = $"/{invocation} Targets: {string.Join(", ", paths)}";
+            var projectRoot = Path.GetDirectoryName(Application.dataPath);
+
+            int progressId = Progress.Start($"UniMCP · {skill.name}");
+            Progress.SetDescription(progressId, $"Running on {paths.Count} target(s)");
+
+            try
+            {
+                var response = await ClaudeProcess.Send(prompt, projectRoot, null);
+                var summary = response.result ?? "";
+                Debug.Log($"[UniMCP] {skill.name} 완료\nTargets: {string.Join(", ", paths)}\n---\n{summary}");
+                Progress.Finish(progressId);
+                AssetDatabase.Refresh();
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"[UniMCP] {skill.name} 실패: {e.Message}");
+                Progress.Finish(progressId, Progress.Status.Failed);
+            }
         }
     }
 }

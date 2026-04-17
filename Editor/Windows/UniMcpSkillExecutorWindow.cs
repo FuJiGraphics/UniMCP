@@ -256,7 +256,7 @@ namespace UniMCP.Editor.Windows
             }
         }
 
-        private static UnityEngine.Object ResolveToAsset(UnityEngine.Object obj)
+        internal static UnityEngine.Object ResolveToAsset(UnityEngine.Object obj)
         {
             if (obj == null)
                 return null;
