@@ -22,6 +22,8 @@ namespace UniMCP.Editor.Windows
         private Vector2 _scrollMessages;
         private bool _isWaiting;
         private bool _scrollToBottom;
+        private double _thinkingStartedAt;
+        private int _thinkingDots;
 
         [MenuItem("UniMCP/Open Window")]
         private static void Open()
@@ -29,6 +31,30 @@ namespace UniMCP.Editor.Windows
             var window = GetWindow<UniMcpWindow>("UniMCP");
             window.minSize = new Vector2(480, 420);
             window.Show();
+        }
+
+        private void OnEnable()
+        {
+            EditorApplication.update += OnEditorUpdate;
+        }
+
+        private void OnDisable()
+        {
+            EditorApplication.update -= OnEditorUpdate;
+        }
+
+        private void OnEditorUpdate()
+        {
+            if (!_isWaiting)
+                return;
+
+            var elapsed = EditorApplication.timeSinceStartup - _thinkingStartedAt;
+            var newDots = ((int)(elapsed * 2)) % 4;
+            if (newDots != _thinkingDots)
+            {
+                _thinkingDots = newDots;
+                Repaint();
+            }
         }
 
         private void OnGUI()
@@ -68,7 +94,7 @@ namespace UniMCP.Editor.Windows
         {
             _scrollMessages = EditorGUILayout.BeginScrollView(_scrollMessages);
 
-            if (_messages.Count == 0)
+            if (_messages.Count == 0 && !_isWaiting)
             {
                 EditorGUILayout.Space(40);
                 var hint = new GUIStyle(EditorStyles.centeredGreyMiniLabel) { fontSize = 11 };
@@ -80,6 +106,9 @@ namespace UniMCP.Editor.Windows
             {
                 foreach (var m in _messages)
                     DrawMessage(m);
+
+                if (_isWaiting)
+                    DrawThinking();
             }
 
             if (_scrollToBottom && Event.current.type == EventType.Repaint)
@@ -113,9 +142,34 @@ namespace UniMCP.Editor.Windows
                 var bodyStyle = new GUIStyle(EditorStyles.label)
                 {
                     wordWrap = true,
-                    richText = false,
+                    richText = true,
                 };
-                EditorGUILayout.LabelField(m.text, bodyStyle);
+                var rendered = m.role == eChatRole.Assistant
+                    ? MarkdownRenderer.ToRichText(m.text)
+                    : m.text;
+                EditorGUILayout.LabelField(rendered, bodyStyle);
+            }
+
+            EditorGUILayout.Space(2);
+        }
+
+        private void DrawThinking()
+        {
+            using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+            {
+                var headerStyle = new GUIStyle(EditorStyles.miniBoldLabel)
+                {
+                    normal = { textColor = new Color(0.70f, 1.00f, 0.70f) },
+                };
+                EditorGUILayout.LabelField("Claude", headerStyle);
+
+                var body = new GUIStyle(EditorStyles.label)
+                {
+                    fontStyle = FontStyle.Italic,
+                    normal = { textColor = new Color(0.70f, 0.70f, 0.70f) },
+                };
+                var dots = new string('.', _thinkingDots);
+                EditorGUILayout.LabelField($"Thinking{dots}", body);
             }
 
             EditorGUILayout.Space(2);
@@ -149,6 +203,8 @@ namespace UniMCP.Editor.Windows
             });
             _input = "";
             _isWaiting = true;
+            _thinkingStartedAt = EditorApplication.timeSinceStartup;
+            _thinkingDots = 0;
             _scrollToBottom = true;
             Repaint();
 
