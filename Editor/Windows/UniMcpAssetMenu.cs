@@ -1,9 +1,7 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Reflection;
-using UniMCP.Editor.Chat;
 using UniMCP.Editor.Settings;
 using UnityEditor;
 using UnityEngine;
@@ -146,7 +144,7 @@ namespace UniMCP.Editor.Windows
                     && !string.IsNullOrEmpty(AssetDatabase.GetAssetPath(o)));
         }
 
-        private static async void RunSkillAsync(UniMcpSkill skill)
+        private static void RunSkillAsync(UniMcpSkill skill)
         {
             var paths = new List<string>();
             foreach (var o in Selection.objects ?? Array.Empty<UnityEngine.Object>())
@@ -161,26 +159,7 @@ namespace UniMCP.Editor.Windows
             if (paths.Count == 0)
                 return;
 
-            var invocation = SkillStore.GetInvocationName(skill.name);
-            var prompt = $"/{invocation} Targets: {string.Join(", ", paths)}";
-            var projectRoot = Path.GetDirectoryName(Application.dataPath);
-
-            int progressId = Progress.Start($"UniMCP · {skill.name}");
-            Progress.SetDescription(progressId, $"Running on {paths.Count} target(s)");
-
-            try
-            {
-                var response = await ClaudeProcess.Send(prompt, projectRoot, null);
-                var summary = response.result ?? "";
-                Debug.Log($"[UniMCP] {skill.name} 완료\nTargets: {string.Join(", ", paths)}\n---\n{summary}");
-                Progress.Finish(progressId);
-                AssetDatabase.Refresh();
-            }
-            catch (Exception e)
-            {
-                Debug.LogError($"[UniMCP] {skill.name} 실패: {e.Message}");
-                Progress.Finish(progressId, Progress.Status.Failed);
-            }
+            UniMcpRunQueue.Enqueue(skill, paths);
         }
     }
 }

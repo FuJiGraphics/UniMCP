@@ -1,10 +1,6 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using UniMCP.Editor.Chat;
 using UniMCP.Editor.Settings;
 using UnityEditor;
 using UnityEngine;
@@ -59,41 +55,32 @@ namespace UniMCP.Editor.Windows
             return window;
         }
 
-        internal void PresetAndRun(UniMcpSkill skill, IEnumerable<UnityEngine.Object> targets)
-        {
-            _targets.Clear();
-            foreach (var t in targets)
-            {
-                var resolved = ResolveToAsset(t);
-                if (resolved == null) continue;
-                if (!_targets.Contains(resolved))
-                    _targets.Add(resolved);
-            }
-
-            var skills = UniMcpSettings.instance.Skills;
-            for (int i = 0; i < skills.Count; i++)
-            {
-                if (skills[i].name == skill.name)
-                {
-                    _selectedSkillIdx = i;
-                    break;
-                }
-            }
-
-            Focus();
-
-            if (!_isRunning && _targets.Count > 0 && skills.Count > 0)
-                _ = RunAsync();
-        }
+        private UniMcpSkill _myQueuedSkill;
+        private bool _isMyJobRunning;
 
         private void OnEnable()
         {
             EditorApplication.update += OnEditorUpdate;
+            UniMcpRunQueue.QueueChanged += OnQueueChanged;
         }
 
         private void OnDisable()
         {
             EditorApplication.update -= OnEditorUpdate;
+            UniMcpRunQueue.QueueChanged -= OnQueueChanged;
+        }
+
+        private void OnQueueChanged()
+        {
+            var isMine = _myQueuedSkill != null
+                         && UniMcpRunQueue.RunningSkill == _myQueuedSkill;
+            if (isMine && !_isMyJobRunning)
+            {
+                _runStartedAt = EditorApplication.timeSinceStartup;
+                _thinkingDots = 0;
+            }
+            _isMyJobRunning = isMine;
+            Repaint();
         }
 
         private void OnEditorUpdate()
@@ -289,7 +276,7 @@ namespace UniMCP.Editor.Windows
             {
                 GUI.enabled = canRun;
                 if (GUILayout.Button(_isRunning ? "..." : "Run", GUILayout.Height(32)))
-                    _ = RunAsync();
+                    TriggerRun();
                 GUI.enabled = true;
             }
 
@@ -305,17 +292,31 @@ namespace UniMCP.Editor.Windows
             {
                 if (_isRunning)
                 {
-                    var elapsed = EditorApplication.timeSinceStartup - _runStartedAt;
                     var dots = new string('.', _thinkingDots);
                     var thinkingStyle = new GUIStyle(EditorStyles.label)
                     {
                         fontStyle = FontStyle.Italic,
                         normal = { textColor = new Color(0.70f, 0.70f, 0.70f) },
                     };
-                    EditorGUILayout.LabelField($"Running{dots}  ({elapsed:F0}s)", thinkingStyle);
-                    EditorGUILayout.LabelField(
-                        "프리팹 자식 트리 전체를 스캔·리네임할 경우 30초~수 분 걸릴 수 있습니다.",
-                        EditorStyles.miniLabel);
+
+                    if (_isMyJobRunning)
+                    {
+                        var elapsed = EditorApplication.timeSinceStartup - _runStartedAt;
+                        EditorGUILayout.LabelField($"Running{dots}  ({elapsed:F0}s)", thinkingStyle);
+                        EditorGUILayout.LabelField(
+                            "프리팹 자식 트리 전체를 스캔·리네임할 경우 30초~수 분 걸릴 수 있습니다.",
+                            EditorStyles.miniLabel);
+                    }
+                    else
+                    {
+                        var q = UniMcpRunQueue.QueuedCount;
+                        var running = UniMcpRunQueue.RunningSkill;
+                        EditorGUILayout.LabelField($"Queued{dots}", thinkingStyle);
+                        var detail = running != null
+                            ? $"앞선 작업 실행 중: {running.name}   ·   대기 중: {q}"
+                            : $"대기 중: {q}";
+                        EditorGUILayout.LabelField(detail, EditorStyles.miniLabel);
+                    }
                     return;
                 }
 
@@ -341,50 +342,52 @@ namespace UniMCP.Editor.Windows
             }
         }
 
-        private async Task RunAsync()
+        private void TriggerRun()
         {
             var skills = UniMcpSettings.instance.Skills;
-            if (skills.Count == 0 || _targets.Count == 0)
+            if (skills.Count == 0 || _targets.Count == 0 || _isRunning)
                 return;
 
             var skill = skills[Mathf.Clamp(_selectedSkillIdx, 0, skills.Count - 1)];
-            var prompt = BuildPrompt(skill.name);
 
+            var paths = new List<string>();
+            foreach (var t in _targets)
+            {
+                var p = AssetDatabase.GetAssetPath(t);
+                if (!string.IsNullOrEmpty(p) && !paths.Contains(p))
+                    paths.Add(p);
+            }
+            if (paths.Count == 0)
+                return;
+
+            _myQueuedSkill = skill;
+            _isMyJobRunning = false;
             _isRunning = true;
             _runStartedAt = EditorApplication.timeSinceStartup;
             _thinkingDots = 0;
             _result = "";
             Repaint();
 
-            try
-            {
-                var projectRoot = Path.GetDirectoryName(Application.dataPath);
-                var response = await ClaudeProcess.Send(prompt, projectRoot, null);
-                _result = response.result ?? "";
-            }
-            catch (Exception e)
-            {
-                _result = "Error: " + e.Message;
-            }
-            finally
-            {
-                _isRunning = false;
-                _lastRunAt = DateTime.Now.ToString("HH:mm:ss");
-                Repaint();
-            }
+            UniMcpRunQueue.Enqueue(skill, paths,
+                onSuccess: resp =>
+                {
+                    _result = resp.result ?? "";
+                    OnMyJobDone();
+                },
+                onFailure: ex =>
+                {
+                    _result = "Error: " + ex.Message;
+                    OnMyJobDone();
+                });
         }
 
-        private string BuildPrompt(string skillName)
+        private void OnMyJobDone()
         {
-            var paths = new List<string>();
-            foreach (var t in _targets)
-            {
-                var path = AssetDatabase.GetAssetPath(t);
-                if (!string.IsNullOrEmpty(path))
-                    paths.Add(path);
-            }
-            var invocation = SkillStore.GetInvocationName(skillName);
-            return $"/{invocation} Targets: {string.Join(", ", paths)}";
+            _isRunning = false;
+            _isMyJobRunning = false;
+            _myQueuedSkill = null;
+            _lastRunAt = DateTime.Now.ToString("HH:mm:ss");
+            Repaint();
         }
     }
 }
