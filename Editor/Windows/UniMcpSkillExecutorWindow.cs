@@ -120,14 +120,48 @@ namespace UniMCP.Editor.Windows
         {
             EditorGUILayout.LabelField("Targets", EditorStyles.boldLabel);
 
-            var drop = EditorGUILayout.GetControlRect(false, 48);
-            HandleDropArea(drop);
+            var dropRect = GUILayoutUtility.GetRect(
+                0, 56,
+                GUILayout.ExpandWidth(true));
+
+            var evt = Event.current;
+            var hovering = dropRect.Contains(evt.mousePosition)
+                && (evt.type == EventType.DragUpdated || evt.type == EventType.DragPerform);
+
             var dropStyle = new GUIStyle(EditorStyles.helpBox)
             {
                 alignment = TextAnchor.MiddleCenter,
                 fontStyle = FontStyle.Italic,
             };
-            GUI.Label(drop, "Drop prefabs / scripts here", dropStyle);
+            if (hovering)
+                dropStyle.normal.textColor = new Color(0.4f, 0.8f, 1f);
+
+            GUI.Box(
+                dropRect,
+                hovering ? "Release to add" : "Drop prefabs / scripts here",
+                dropStyle);
+
+            if (dropRect.Contains(evt.mousePosition))
+            {
+                if (evt.type == EventType.DragUpdated)
+                {
+                    DragAndDrop.visualMode = DragAndDropVisualMode.Copy;
+                    evt.Use();
+                }
+                else if (evt.type == EventType.DragPerform)
+                {
+                    DragAndDrop.AcceptDrag();
+                    foreach (var obj in DragAndDrop.objectReferences)
+                    {
+                        if (obj == null) continue;
+                        if (_targets.Contains(obj)) continue;
+                        if (string.IsNullOrEmpty(AssetDatabase.GetAssetPath(obj))) continue;
+                        _targets.Add(obj);
+                    }
+                    evt.Use();
+                    Repaint();
+                }
+            }
 
             if (_targets.Count == 0)
             {
@@ -190,32 +224,6 @@ namespace UniMCP.Editor.Windows
                     continue;
 
                 _targets.Add(o);
-            }
-        }
-
-        private void HandleDropArea(Rect area)
-        {
-            var evt = Event.current;
-            if (!area.Contains(evt.mousePosition))
-                return;
-
-            if (evt.type == EventType.DragUpdated)
-            {
-                DragAndDrop.visualMode = DragAndDropVisualMode.Copy;
-                evt.Use();
-            }
-            else if (evt.type == EventType.DragPerform)
-            {
-                DragAndDrop.AcceptDrag();
-                foreach (var obj in DragAndDrop.objectReferences)
-                {
-                    if (obj == null || _targets.Contains(obj))
-                        continue;
-                    if (string.IsNullOrEmpty(AssetDatabase.GetAssetPath(obj)))
-                        continue;
-                    _targets.Add(obj);
-                }
-                evt.Use();
             }
         }
 
