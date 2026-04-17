@@ -41,6 +41,7 @@ namespace UniMCP.Editor.Windows
         private string _renameTarget;
         private string _renameBuffer;
         private bool _renameFocusPending;
+        private bool _renameFocusArmed;
         private bool _pendingRenameCommit;
 
         private class TreeNode
@@ -409,12 +410,19 @@ namespace UniMCP.Editor.Windows
                     }
                 }
 
-                if (Event.current.type == EventType.Repaint
-                    && !_renameFocusPending
-                    && GUI.GetNameOfFocusedControl() != "RenameField")
+                if (Event.current.type == EventType.Repaint && !_renameFocusPending)
                 {
-                    _pendingRenameCommit = true;
-                    Repaint();
+                    var focused = GUI.GetNameOfFocusedControl();
+                    if (!_renameFocusArmed)
+                    {
+                        if (focused == "RenameField")
+                            _renameFocusArmed = true;
+                    }
+                    else if (focused != "RenameField")
+                    {
+                        _pendingRenameCommit = true;
+                        Repaint();
+                    }
                 }
             }
             else
@@ -788,6 +796,7 @@ namespace UniMCP.Editor.Windows
             var slash = path.LastIndexOf('/');
             _renameBuffer = slash < 0 ? path : path.Substring(slash + 1);
             _renameFocusPending = true;
+            _renameFocusArmed = false;
             Repaint();
         }
 
@@ -851,6 +860,7 @@ namespace UniMCP.Editor.Windows
             _renameTarget = null;
             _renameBuffer = null;
             _renameFocusPending = false;
+            _renameFocusArmed = false;
             Repaint();
         }
 
@@ -859,6 +869,7 @@ namespace UniMCP.Editor.Windows
             _renameTarget = null;
             _renameBuffer = null;
             _renameFocusPending = false;
+            _renameFocusArmed = false;
             Repaint();
         }
 
