@@ -113,7 +113,8 @@ namespace UniMCP.Editor.Chat
                 $"-p {escapedPrompt} " +
                 $"--output-format json " +
                 $"--append-system-prompt {escapedScope} " +
-                $"--disallowedTools \"{DisallowedTools}\"" +
+                $"--disallowedTools \"{DisallowedTools}\" " +
+                $"--permission-mode bypassPermissions" +
                 addDirParts +
                 resumePart;
 
