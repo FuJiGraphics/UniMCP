@@ -1433,7 +1433,8 @@ namespace UniMCP.Editor.Windows
                 return;
             }
 
-            SkillStore.Sync(_skillsSnapshot, _skillsBuffer);
+            // SetSkills 내부에서 SkillStore.Sync 를 호출해 디스크에 기록하고
+            // asset 에는 이름만 저장한다
             UniMcpSettings.instance.SetSkills(_skillsBuffer);
             _skillsSnapshot = _skillsBuffer.Select(s => s.Clone()).ToList();
         }

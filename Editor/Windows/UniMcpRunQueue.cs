@@ -2,129 +2,372 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using UniMCP.Editor.Chat;
+using UniMCP.Editor.Logging;
 using UniMCP.Editor.Settings;
 using UnityEditor;
 using UnityEngine;
 
 namespace UniMCP.Editor.Windows
 {
+    public enum JobState
+    {
+        Pending,
+        Running,
+        Success,
+        Failed,
+        Cancelled,
+    }
+
+    public class JobRecord
+    {
+        public Guid id;
+        public UniMcpSkill skill;
+        public List<string> targets;
+        public JobState state;
+        public DateTime startedAt;
+        public DateTime? finishedAt;
+        public string progressText;
+        public string resultText;
+        public string errorMessage;
+        public int progressId;
+        public CancellationTokenSource cts;
+        public Action<ClaudeResponse> onSuccess;
+        public Action<Exception> onFailure;
+    }
+
     /// <summary>
-    /// 스킬 실행 요청을 전역 직렬 큐로 처리한다.
-    /// 동시 실행 1건만 허용되어 같은 파일 편집 충돌·rate limit을 회피한다.
-    /// Progress API로 개별 작업 상태를 노출하고 QueueChanged 이벤트로 UI가 반응한다
+    /// 스킬 실행 요청을 병렬 큐로 처리한다.
+    /// UniMcpSettings.MaxConcurrentJobs 만큼 동시 실행하며, 동일 타겟을 공유하는 작업은 항상 직렬 처리한다
     /// </summary>
     public static class UniMcpRunQueue
     {
-        private class Job
-        {
-            public UniMcpSkill skill;
-            public List<string> targets;
-            public Action<ClaudeResponse> onSuccess;
-            public Action<Exception> onFailure;
-        }
-
-        private static readonly Queue<Job> _pending = new();
-        private static Job _running;
-        private static int _runningProgressId;
+        private static readonly List<JobRecord> _pending = new();
+        private static readonly List<JobRecord> _running = new();
+        private static readonly List<JobRecord> _history = new();
+        private static double _lastHeartbeatTime;
+        private static bool _heartbeatHooked;
 
         public static event Action QueueChanged;
 
         public static int QueuedCount => _pending.Count;
-        public static bool IsBusy => _running != null;
-        public static UniMcpSkill RunningSkill => _running?.skill;
+        public static bool IsBusy => _running.Count > 0;
+        public static IReadOnlyList<JobRecord> History => _history;
+        public static UniMcpSkill RunningSkill => _running.Count > 0 ? _running[0].skill : null;
+        public static IReadOnlyList<UniMcpSkill> RunningSkills => _running.Select(j => j.skill).ToList();
 
-        public static void Enqueue(
+        public static Guid Enqueue(
             UniMcpSkill skill,
             IEnumerable<string> targetPaths,
             Action<ClaudeResponse> onSuccess = null,
             Action<Exception> onFailure = null)
         {
             if (skill == null)
-                return;
+                return Guid.Empty;
 
             var targets = (targetPaths ?? Array.Empty<string>()).ToList();
-            if (targets.Count == 0)
-                return;
 
-            var job = new Job
+            if (targets.Count == 0)
+                return Guid.Empty;
+
+            var job = new JobRecord
             {
+                id = Guid.NewGuid(),
                 skill = skill,
                 targets = targets,
+                state = JobState.Pending,
+                startedAt = DateTime.Now,
+                cts = new CancellationTokenSource(),
                 onSuccess = onSuccess,
                 onFailure = onFailure,
             };
 
-            _pending.Enqueue(job);
+            _pending.Add(job);
+            _history.Add(job);
             QueueChanged?.Invoke();
-            UpdateRunningProgressDescription();
 
-            if (_running == null)
-                _ = WorkerLoop();
+            TryDispatch();
+
+            return job.id;
         }
 
-        private static async Task WorkerLoop()
+        public static bool Cancel(Guid id)
         {
-            while (_pending.Count > 0)
+            var running = _running.FirstOrDefault(j => j.id == id);
+
+            if (running != null)
             {
-                _running = _pending.Dequeue();
-                _runningProgressId = Progress.Start(
-                    $"UniMCP · {_running.skill.name}",
-                    BuildDescription(_running));
+                try { running.cts.Cancel(); }
+                catch { }
+                return true;
+            }
+
+            var pending = _pending.FirstOrDefault(j => j.id == id);
+
+            if (pending != null)
+            {
+                pending.state = JobState.Cancelled;
+                pending.finishedAt = DateTime.Now;
+                _pending.Remove(pending);
                 QueueChanged?.Invoke();
+                return true;
+            }
+
+            return false;
+        }
+
+        public static bool RemoveFromHistory(Guid id)
+        {
+            var job = _history.FirstOrDefault(j => j.id == id);
+
+            if (job == null)
+                return false;
+
+            if (job.state == JobState.Pending || job.state == JobState.Running)
+                return false;
+
+            _history.Remove(job);
+            QueueChanged?.Invoke();
+            return true;
+        }
+
+        public static void ClearFinishedHistory()
+        {
+            _history.RemoveAll(j => j.state != JobState.Pending && j.state != JobState.Running);
+            QueueChanged?.Invoke();
+        }
+
+        /// <summary>
+        /// pending 큐에서 실행 가능한 작업을 찾아 동시 실행 한도만큼 디스패치한다.
+        /// 같은 타겟을 이미 실행 중인 작업이 있으면 충돌을 피하기 위해 대기시킨다
+        /// </summary>
+        private static void TryDispatch()
+        {
+            var maxConcurrent = UniMcpSettings.instance.MaxConcurrentJobs;
+
+            while (_running.Count < maxConcurrent)
+            {
+                var next = _pending.FirstOrDefault(j => !ConflictsWithRunning(j));
+
+                if (next == null)
+                    break;
+
+                _pending.Remove(next);
+                _running.Add(next);
+                _ = RunJob(next);
+            }
+
+            if (_running.Count > 0)
+                StartHeartbeat();
+            else
+                StopHeartbeat();
+        }
+
+        private static bool ConflictsWithRunning(JobRecord job)
+        {
+            foreach (var r in _running)
+            {
+                foreach (var t in job.targets)
+                {
+                    if (r.targets.Contains(t))
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static async Task RunJob(JobRecord job)
+        {
+            job.state = JobState.Running;
+            job.startedAt = DateTime.Now;
+            job.progressId = Progress.Start(
+                $"UniMCP · {job.skill.name}",
+                BuildDescription(job));
+
+            Progress.RegisterCancelCallback(job.progressId, () =>
+            {
+                try { job.cts.Cancel(); }
+                catch { }
+                return true;
+            });
+
+            QueueChanged?.Invoke();
+
+            UniMcpLogger.Info($"시작: {job.skill.name} | targets={string.Join(", ", job.targets)}");
+
+            OpenTasksWindow();
+
+            try
+            {
+                var invocation = SkillStore.GetInvocationName(job.skill.name);
+                var prompt = $"/{invocation} Targets: {string.Join(", ", job.targets)}";
+                var cwd = Path.GetDirectoryName(Application.dataPath);
+
+                var response = await ClaudeProcess.Send(prompt, cwd, null,
+                    progressText =>
+                    {
+                        job.progressText = progressText;
+                        EditorApplication.delayCall += () =>
+                        {
+                            try
+                            {
+                                if (job.progressId != 0 && Progress.Exists(job.progressId))
+                                    Progress.SetDescription(job.progressId, progressText);
+                            }
+                            catch { }
+                            QueueChanged?.Invoke();
+                        };
+                    },
+                    job.cts.Token);
+
+                job.state = JobState.Success;
+                job.finishedAt = DateTime.Now;
+                job.resultText = response.result ?? "";
+
+                // 스킬이 프리팹을 외부에서 수정했을 수 있으니 타겟 강제 리임포트
+                foreach (var target in job.targets)
+                {
+                    try
+                    {
+                        AssetDatabase.ImportAsset(target, ImportAssetOptions.ForceUpdate);
+                    }
+                    catch { }
+                }
+
+                UniMcpLogger.Info($"{job.skill.name} 완료");
+
+                if (!string.IsNullOrWhiteSpace(response.result))
+                    UniMcpLogger.Info($"result:\n{response.result}");
+
+                Progress.Finish(job.progressId);
+                SafeInvoke(() => job.onSuccess?.Invoke(response));
+            }
+            catch (OperationCanceledException)
+            {
+                job.state = JobState.Cancelled;
+                job.finishedAt = DateTime.Now;
+                UniMcpLogger.Info($"{job.skill.name} 취소됨");
+                Progress.Finish(job.progressId, Progress.Status.Canceled);
+            }
+            catch (Exception e)
+            {
+                job.state = JobState.Failed;
+                job.finishedAt = DateTime.Now;
+                job.errorMessage = e.Message;
+                UniMcpLogger.Error($"{job.skill.name} 실패: {e.Message}");
+                Progress.Finish(job.progressId, Progress.Status.Failed);
+                SafeInvoke(() => job.onFailure?.Invoke(e));
+            }
+
+            _running.Remove(job);
+            QueueChanged?.Invoke();
+
+            TryDispatch();
+
+            if (_running.Count == 0 && _pending.Count == 0)
+                AssetDatabase.Refresh();
+        }
+
+        [MenuItem("UniMCP/Background Tasks")]
+        private static void OpenTasksMenu()
+        {
+            OpenTasksWindow();
+        }
+
+        /// <summary>
+        /// 큐 상태가 꼬였을 때 (좀비 _running, 오래 중단된 작업 등) 강제로 전부 정리
+        /// </summary>
+        [MenuItem("UniMCP/Reset Run Queue")]
+        private static void ResetQueueMenu()
+        {
+            foreach (var job in _running)
+            {
+                try { job.cts?.Cancel(); } catch { }
+                try
+                {
+                    if (job.progressId != 0 && Progress.Exists(job.progressId))
+                        Progress.Finish(job.progressId, Progress.Status.Canceled);
+                }
+                catch { }
+                job.state = JobState.Cancelled;
+                job.finishedAt = DateTime.Now;
+            }
+
+            foreach (var job in _pending)
+            {
+                job.state = JobState.Cancelled;
+                job.finishedAt = DateTime.Now;
+            }
+
+            _running.Clear();
+            _pending.Clear();
+            StopHeartbeat();
+            QueueChanged?.Invoke();
+            UniMcpLogger.Info("Run queue 강제 리셋");
+        }
+
+        private static void OpenTasksWindow()
+        {
+            try { EditorApplication.ExecuteMenuItem("Window/General/Progress"); }
+            catch { }
+        }
+
+        private static string BuildDescription(JobRecord job)
+        {
+            return job.targets.Count == 1
+                ? job.targets[0]
+                : $"{job.targets.Count} targets";
+        }
+
+        private static void StartHeartbeat()
+        {
+            if (_heartbeatHooked)
+                return;
+
+            _lastHeartbeatTime = EditorApplication.timeSinceStartup;
+            EditorApplication.update += Heartbeat;
+            _heartbeatHooked = true;
+        }
+
+        private static void StopHeartbeat()
+        {
+            if (!_heartbeatHooked)
+                return;
+
+            EditorApplication.update -= Heartbeat;
+            _heartbeatHooked = false;
+        }
+
+        private static void Heartbeat()
+        {
+            var now = EditorApplication.timeSinceStartup;
+
+            if (now - _lastHeartbeatTime < 1.0)
+                return;
+
+            _lastHeartbeatTime = now;
+
+            foreach (var job in _running)
+            {
+                if (job.progressId == 0)
+                    continue;
 
                 try
                 {
-                    var invocation = SkillStore.GetInvocationName(_running.skill.name);
-                    var prompt = $"/{invocation} Targets: {string.Join(", ", _running.targets)}";
-                    var cwd = Path.GetDirectoryName(Application.dataPath);
-
-                    var response = await ClaudeProcess.Send(prompt, cwd, null);
-
-                    Debug.Log(
-                        $"[UniMCP] {_running.skill.name} 완료\n" +
-                        $"Targets: {string.Join(", ", _running.targets)}\n---\n" +
-                        (response.result ?? ""));
-
-                    Progress.Finish(_runningProgressId);
-                    SafeInvoke(() => _running.onSuccess?.Invoke(response));
+                    if (Progress.Exists(job.progressId))
+                        Progress.Report(job.progressId, -1f);
                 }
-                catch (Exception e)
-                {
-                    Debug.LogError($"[UniMCP] {_running.skill.name} 실패: {e.Message}");
-                    Progress.Finish(_runningProgressId, Progress.Status.Failed);
-                    SafeInvoke(() => _running.onFailure?.Invoke(e));
-                }
-
-                _running = null;
-                _runningProgressId = 0;
-                QueueChanged?.Invoke();
+                catch { }
             }
-
-            AssetDatabase.Refresh();
-        }
-
-        private static string BuildDescription(Job job)
-        {
-            var q = _pending.Count;
-            return q > 0
-                ? $"Targets: {job.targets.Count}  |  Queued: {q}"
-                : $"Targets: {job.targets.Count}";
-        }
-
-        private static void UpdateRunningProgressDescription()
-        {
-            if (_running == null || _runningProgressId == 0)
-                return;
-            try { Progress.SetDescription(_runningProgressId, BuildDescription(_running)); }
-            catch { /* progress may already be finished */ }
         }
 
         private static void SafeInvoke(Action a)
         {
             try { a?.Invoke(); }
-            catch (Exception e) { Debug.LogException(e); }
+            catch (Exception e) { UniMcpLogger.Exception(e); }
         }
     }
 }

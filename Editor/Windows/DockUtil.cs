@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Reflection;
+using UniMCP.Editor.Logging;
 using UnityEditor;
 using UnityEngine;
 
@@ -55,7 +56,7 @@ namespace UniMCP.Editor.Windows
             }
             catch (Exception e)
             {
-                Debug.LogWarning("[UniMCP] Dock attempt failed, falling back to floating. " + e.Message);
+                UniMcpLogger.Warn("Dock attempt failed, falling back to floating. " + e.Message);
                 return false;
             }
         }

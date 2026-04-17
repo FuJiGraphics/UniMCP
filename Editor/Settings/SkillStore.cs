@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
+using UniMCP.Editor.Logging;
 using UnityEngine;
 
 namespace UniMCP.Editor.Settings
@@ -29,6 +31,118 @@ namespace UniMCP.Editor.Settings
         {
             var dir = GetDirName(skillName);
             return string.IsNullOrEmpty(dir) ? null : Path.Combine(SkillsRoot, dir);
+        }
+
+        /// <summary>
+        /// 디스크에 저장된 모든 managed 스킬 디렉토리를 스캔해 이름 리스트를 반환한다
+        /// </summary>
+        public static List<string> DiscoverNamesOnDisk()
+        {
+            var names = new List<string>();
+
+            if (!Directory.Exists(SkillsRoot))
+                return names;
+
+            foreach (var dir in Directory.GetDirectories(SkillsRoot))
+            {
+                var dirName = Path.GetFileName(dir);
+
+                if (!dirName.StartsWith(ManagedPrefix))
+                    continue;
+
+                var skillMd = Path.Combine(dir, "SKILL.md");
+
+                if (!File.Exists(skillMd))
+                    continue;
+
+                string content;
+                try { content = File.ReadAllText(skillMd); }
+                catch { continue; }
+
+                if (!content.Contains(ManagedMarker))
+                    continue;
+
+                // 디렉토리 이름에서 접두사 제거 → 스킬 이름 추정
+                var nameGuess = dirName.Substring(ManagedPrefix.Length).Replace('-', ' ');
+                names.Add(nameGuess);
+            }
+
+            return names;
+        }
+
+        /// <summary>
+        /// 디스크에서 스킬 한 개를 읽어 UniMcpSkill 객체로 반환. 없으면 null
+        /// </summary>
+        public static UniMcpSkill LoadFromDisk(string skillName)
+        {
+            var dir = GetSkillDirectoryPath(skillName);
+
+            if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir))
+                return null;
+
+            var skillMdPath = Path.Combine(dir, "SKILL.md");
+
+            if (!File.Exists(skillMdPath))
+                return null;
+
+            string content;
+            try { content = File.ReadAllText(skillMdPath); }
+            catch { return null; }
+
+            if (!content.Contains(ManagedMarker))
+                return null;
+
+            return new UniMcpSkill
+            {
+                name = skillName,
+                prompt = StripFrontmatter(content),
+                files = ReadAllSubFiles(dir),
+                folders = ReadAllFolders(dir),
+            };
+        }
+
+        private static string StripFrontmatter(string content)
+        {
+            var match = Regex.Match(content, @"^---\s*\r?\n[\s\S]*?\r?\n---\s*\r?\n\r?\n?");
+            return match.Success ? content.Substring(match.Length) : content;
+        }
+
+        private static List<UniMcpSkillFile> ReadAllSubFiles(string skillDir)
+        {
+            var result = new List<UniMcpSkillFile>();
+
+            foreach (var fullPath in Directory.GetFiles(skillDir, "*", SearchOption.AllDirectories))
+            {
+                var relative = Path.GetRelativePath(skillDir, fullPath).Replace('\\', '/');
+
+                if (relative.Equals("SKILL.md", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                try
+                {
+                    result.Add(new UniMcpSkillFile
+                    {
+                        path = relative,
+                        content = File.ReadAllText(fullPath),
+                    });
+                }
+                catch { }
+            }
+
+            return result;
+        }
+
+        private static List<string> ReadAllFolders(string skillDir)
+        {
+            var result = new List<string>();
+
+            foreach (var dir in Directory.GetDirectories(skillDir, "*", SearchOption.AllDirectories))
+            {
+                var relative = Path.GetRelativePath(skillDir, dir).Replace('\\', '/');
+                result.Add(relative);
+            }
+
+            return result;
         }
 
         public static void Sync(IEnumerable<UniMcpSkill> previous, IEnumerable<UniMcpSkill> current)
@@ -91,7 +205,7 @@ namespace UniMCP.Editor.Settings
             try { Directory.Delete(oldDir, recursive: true); }
             catch (Exception e)
             {
-                Debug.LogWarning($"[UniMCP] Failed to migrate old skill dir '{safe}': {e.Message}");
+                UniMcpLogger.Warn($"Failed to migrate old skill dir '{safe}': {e.Message}");
             }
         }
 
@@ -144,7 +258,7 @@ namespace UniMCP.Editor.Settings
 
                     var toDelete = Path.Combine(dir, prevFile.path);
                     try { if (File.Exists(toDelete)) File.Delete(toDelete); }
-                    catch (Exception e) { Debug.LogWarning($"[UniMCP] Failed to delete skill file '{prevFile.path}': {e.Message}"); }
+                    catch (Exception e) { UniMcpLogger.Warn($"Failed to delete skill file '{prevFile.path}': {e.Message}"); }
                 }
 
                 var currentFolders = new HashSet<string>(
@@ -167,7 +281,7 @@ namespace UniMCP.Editor.Settings
                     }
                     catch (Exception e)
                     {
-                        Debug.LogWarning($"[UniMCP] Failed to prune folder '{prevFolder}': {e.Message}");
+                        UniMcpLogger.Warn($"Failed to prune folder '{prevFolder}': {e.Message}");
                     }
                 }
             }
@@ -191,7 +305,7 @@ namespace UniMCP.Editor.Settings
                 return;
 
             try { Directory.Delete(dir, recursive: true); }
-            catch (Exception e) { Debug.LogWarning($"[UniMCP] Failed to delete skill '{dirName}': {e.Message}"); }
+            catch (Exception e) { UniMcpLogger.Warn($"Failed to delete skill '{dirName}': {e.Message}"); }
         }
 
         private static string BuildSkillFile(UniMcpSkill skill)

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using UniMCP.Editor.Logging;
 using UniMCP.Editor.Settings;
 using UnityEditor;
 using UnityEngine;
@@ -83,7 +84,7 @@ namespace UniMCP.Editor.Windows
             }
             catch (Exception e)
             {
-                Debug.LogWarning("[UniMCP] AddMenuItem reflection failed: " + e.Message);
+                UniMcpLogger.Warn("AddMenuItem reflection failed: " + e.Message);
                 return false;
             }
         }
