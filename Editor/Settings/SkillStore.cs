@@ -13,10 +13,17 @@ namespace UniMCP.Editor.Settings
     /// </summary>
     public static class SkillStore
     {
+        public const string ManagedPrefix = "unimcp-";
         private const string ManagedMarker = "unimcp_managed: true";
 
         private static string ProjectRoot => Path.GetDirectoryName(Application.dataPath);
         private static string SkillsRoot => Path.Combine(ProjectRoot, ".claude", "skills");
+
+        public static string GetInvocationName(string skillName)
+        {
+            var safe = SanitizeName(skillName);
+            return string.IsNullOrEmpty(safe) ? "" : ManagedPrefix + safe;
+        }
 
         public static void Sync(IEnumerable<UniMcpSkill> previous, IEnumerable<UniMcpSkill> current)
         {
@@ -25,29 +32,70 @@ namespace UniMCP.Editor.Settings
             var previousList = previous?.ToList() ?? new List<UniMcpSkill>();
             var currentList = current?.ToList() ?? new List<UniMcpSkill>();
 
-            var currentNames = new HashSet<string>(currentList.Select(s => SanitizeName(s.name)));
+            foreach (var skill in currentList)
+                MigrateFromUnprefixed(skill);
+
+            var currentDirs = new HashSet<string>(
+                currentList.Select(s => GetDirName(s.name)),
+                StringComparer.OrdinalIgnoreCase);
 
             foreach (var prev in previousList)
             {
-                var safe = SanitizeName(prev.name);
-                if (!currentNames.Contains(safe))
-                    TryDeleteManagedSkillDir(safe);
+                var dir = GetDirName(prev.name);
+                if (!currentDirs.Contains(dir))
+                    TryDeleteManagedSkillDir(dir);
             }
 
             foreach (var skill in currentList)
             {
-                var prev = previousList.FirstOrDefault(p => SanitizeName(p.name) == SanitizeName(skill.name));
+                var prev = previousList.FirstOrDefault(
+                    p => GetDirName(p.name) == GetDirName(skill.name));
                 WriteSkill(skill, prev);
             }
         }
 
-        private static void WriteSkill(UniMcpSkill skill, UniMcpSkill previous)
+        private static string GetDirName(string skillName)
+        {
+            var safe = SanitizeName(skillName);
+            return string.IsNullOrEmpty(safe) ? "" : ManagedPrefix + safe;
+        }
+
+        private static void MigrateFromUnprefixed(UniMcpSkill skill)
         {
             var safe = SanitizeName(skill.name);
             if (string.IsNullOrEmpty(safe))
                 return;
 
-            var dir = Path.Combine(SkillsRoot, safe);
+            var oldDir = Path.Combine(SkillsRoot, safe);
+            var newDir = Path.Combine(SkillsRoot, ManagedPrefix + safe);
+            if (!Directory.Exists(oldDir) || string.Equals(oldDir, newDir, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            var oldSkillMd = Path.Combine(oldDir, "SKILL.md");
+            if (!File.Exists(oldSkillMd))
+                return;
+
+            string content;
+            try { content = File.ReadAllText(oldSkillMd); }
+            catch { return; }
+
+            if (!content.Contains(ManagedMarker))
+                return;
+
+            try { Directory.Delete(oldDir, recursive: true); }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[UniMCP] Failed to migrate old skill dir '{safe}': {e.Message}");
+            }
+        }
+
+        private static void WriteSkill(UniMcpSkill skill, UniMcpSkill previous)
+        {
+            var dirName = GetDirName(skill.name);
+            if (string.IsNullOrEmpty(dirName))
+                return;
+
+            var dir = Path.Combine(SkillsRoot, dirName);
             Directory.CreateDirectory(dir);
 
             File.WriteAllText(Path.Combine(dir, "SKILL.md"), BuildSkillFile(skill));
@@ -119,12 +167,12 @@ namespace UniMCP.Editor.Settings
             }
         }
 
-        private static void TryDeleteManagedSkillDir(string safeName)
+        private static void TryDeleteManagedSkillDir(string dirName)
         {
-            if (string.IsNullOrEmpty(safeName))
+            if (string.IsNullOrEmpty(dirName))
                 return;
 
-            var dir = Path.Combine(SkillsRoot, safeName);
+            var dir = Path.Combine(SkillsRoot, dirName);
             var file = Path.Combine(dir, "SKILL.md");
             if (!File.Exists(file))
                 return;
@@ -137,15 +185,16 @@ namespace UniMCP.Editor.Settings
                 return;
 
             try { Directory.Delete(dir, recursive: true); }
-            catch (Exception e) { Debug.LogWarning($"[UniMCP] Failed to delete skill '{safeName}': {e.Message}"); }
+            catch (Exception e) { Debug.LogWarning($"[UniMCP] Failed to delete skill '{dirName}': {e.Message}"); }
         }
 
         private static string BuildSkillFile(UniMcpSkill skill)
         {
+            var invocation = GetInvocationName(skill.name);
             var sb = new StringBuilder();
             sb.AppendLine("---");
-            sb.AppendLine($"name: {skill.name}");
-            sb.AppendLine("description: Project-specific skill managed by UniMCP.");
+            sb.AppendLine($"name: {invocation}");
+            sb.AppendLine($"description: UniMCP-managed skill ({skill.name}).");
             sb.AppendLine(ManagedMarker);
             sb.AppendLine("---");
             sb.AppendLine();

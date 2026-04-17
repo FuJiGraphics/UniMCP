@@ -905,6 +905,16 @@ namespace UniMCP.Editor.Windows
                 }
             }
 
+            var invocation = SkillStore.GetInvocationName(skill.name);
+            if (!string.IsNullOrEmpty(invocation))
+            {
+                var hintStyle = new GUIStyle(EditorStyles.miniLabel)
+                {
+                    normal = { textColor = ColorMuted },
+                };
+                EditorGUILayout.LabelField($"Invoke in chat: /{invocation}", hintStyle);
+            }
+
             if (_selectedFilePath == SkillMdPath)
                 DrawSkillMdEditor(skill);
             else if (skill.folders != null && skill.folders.Contains(_selectedFilePath))

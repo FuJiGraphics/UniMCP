@@ -350,7 +350,8 @@ namespace UniMCP.Editor.Windows
                 if (!string.IsNullOrEmpty(path))
                     paths.Add(path);
             }
-            return $"/{skillName} Targets: {string.Join(", ", paths)}";
+            var invocation = SkillStore.GetInvocationName(skillName);
+            return $"/{invocation} Targets: {string.Join(", ", paths)}";
         }
     }
 }
