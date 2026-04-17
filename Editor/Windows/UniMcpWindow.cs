@@ -10,20 +10,8 @@ namespace UniMCP.Editor.Windows
 {
     public class UniMcpWindow : EditorWindow
     {
-        private enum eTab
-        {
-            Chat = 0,
-            Status = 1,
-        }
-
-        private eTab _currentTab = eTab.Chat;
-        private readonly List<ChatMessage> _messages = new();
-        private string _input = "";
-        private Vector2 _scrollMessages;
-        private bool _isWaiting;
-        private bool _scrollToBottom;
-        private double _thinkingStartedAt;
-        private int _thinkingDots;
+        private readonly List<ChatSessionData> _sessions = new();
+        private int _activeIdx;
 
         [MenuItem("UniMCP/Open Window")]
         private static void Open()
@@ -35,6 +23,9 @@ namespace UniMCP.Editor.Windows
 
         private void OnEnable()
         {
+            if (_sessions.Count == 0)
+                _sessions.Add(NewSession());
+
             EditorApplication.update += OnEditorUpdate;
         }
 
@@ -45,56 +36,100 @@ namespace UniMCP.Editor.Windows
 
         private void OnEditorUpdate()
         {
-            if (!_isWaiting)
+            var s = Active;
+            if (!s.isWaiting)
                 return;
 
-            var elapsed = EditorApplication.timeSinceStartup - _thinkingStartedAt;
+            var elapsed = EditorApplication.timeSinceStartup - s.thinkingStartedAt;
             var newDots = ((int)(elapsed * 2)) % 4;
-            if (newDots != _thinkingDots)
+            if (newDots != s.thinkingDots)
             {
-                _thinkingDots = newDots;
+                s.thinkingDots = newDots;
                 Repaint();
             }
         }
 
+        private ChatSessionData Active => _sessions[_activeIdx];
+
+        private ChatSessionData NewSession()
+        {
+            var idx = _sessions.Count + 1;
+            return new ChatSessionData { name = $"Session {idx}" };
+        }
+
         private void OnGUI()
         {
-            DrawTabs();
+            DrawSessionTabs();
             EditorGUILayout.Space(4);
-
-            switch (_currentTab)
-            {
-                case eTab.Chat:   DrawChat(); break;
-                case eTab.Status: DrawStatus(); break;
-            }
+            DrawChat(Active);
         }
 
-        private void DrawTabs()
+        private void DrawSessionTabs()
         {
+            int pendingClose = -1;
+            bool addClicked = false;
+
             using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
             {
-                DrawTabButton("💬 Chat", eTab.Chat);
-                DrawTabButton("🔌 Status", eTab.Status);
+                for (int i = 0; i < _sessions.Count; i++)
+                {
+                    var selected = i == _activeIdx;
+                    var style = new GUIStyle(EditorStyles.toolbarButton)
+                    {
+                        fontStyle = selected ? FontStyle.Bold : FontStyle.Normal,
+                        alignment = TextAnchor.MiddleLeft,
+                        padding = new RectOffset(8, 4, 0, 0),
+                    };
+
+                    if (GUILayout.Button(_sessions[i].name, style, GUILayout.MinWidth(80)))
+                        _activeIdx = i;
+
+                    var canClose = _sessions.Count > 1;
+                    GUI.enabled = canClose;
+                    if (GUILayout.Button("×", EditorStyles.toolbarButton, GUILayout.Width(20)))
+                        pendingClose = i;
+                    GUI.enabled = true;
+                }
+
+                if (GUILayout.Button("+", EditorStyles.toolbarButton, GUILayout.Width(24)))
+                    addClicked = true;
+
                 GUILayout.FlexibleSpace();
             }
+
+            if (pendingClose >= 0)
+                CloseSession(pendingClose);
+
+            if (addClicked)
+                AddSession();
         }
 
-        private void DrawTabButton(string label, eTab tab)
+        private void AddSession()
         {
-            var selected = _currentTab == tab;
-            var style = new GUIStyle(EditorStyles.toolbarButton)
-            {
-                fontStyle = selected ? FontStyle.Bold : FontStyle.Normal,
-            };
-            if (GUILayout.Toggle(selected, label, style) && !selected)
-                _currentTab = tab;
+            _sessions.Add(NewSession());
+            _activeIdx = _sessions.Count - 1;
+            Repaint();
         }
 
-        private void DrawChat()
+        private void CloseSession(int index)
         {
-            _scrollMessages = EditorGUILayout.BeginScrollView(_scrollMessages);
+            if (_sessions.Count <= 1)
+                return;
 
-            if (_messages.Count == 0 && !_isWaiting)
+            _sessions.RemoveAt(index);
+            if (_activeIdx >= _sessions.Count)
+                _activeIdx = _sessions.Count - 1;
+            else if (index < _activeIdx)
+                _activeIdx--;
+
+            Repaint();
+        }
+
+        private void DrawChat(ChatSessionData s)
+        {
+            s.scroll = EditorGUILayout.BeginScrollView(s.scroll);
+
+            if (s.messages.Count == 0 && !s.isWaiting)
             {
                 EditorGUILayout.Space(40);
                 var hint = new GUIStyle(EditorStyles.centeredGreyMiniLabel) { fontSize = 11 };
@@ -104,22 +139,22 @@ namespace UniMCP.Editor.Windows
             }
             else
             {
-                foreach (var m in _messages)
+                foreach (var m in s.messages)
                     DrawMessage(m);
 
-                if (_isWaiting)
-                    DrawThinking();
+                if (s.isWaiting)
+                    DrawThinking(s);
             }
 
-            if (_scrollToBottom && Event.current.type == EventType.Repaint)
+            if (s.scrollToBottom && Event.current.type == EventType.Repaint)
             {
-                _scrollMessages.y = float.MaxValue;
-                _scrollToBottom = false;
+                s.scroll.y = float.MaxValue;
+                s.scrollToBottom = false;
             }
 
             EditorGUILayout.EndScrollView();
 
-            DrawInputBar();
+            DrawInputBar(s);
         }
 
         private void DrawMessage(ChatMessage m)
@@ -153,7 +188,7 @@ namespace UniMCP.Editor.Windows
             EditorGUILayout.Space(2);
         }
 
-        private void DrawThinking()
+        private void DrawThinking(ChatSessionData s)
         {
             using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
             {
@@ -168,51 +203,51 @@ namespace UniMCP.Editor.Windows
                     fontStyle = FontStyle.Italic,
                     normal = { textColor = new Color(0.70f, 0.70f, 0.70f) },
                 };
-                var dots = new string('.', _thinkingDots);
+                var dots = new string('.', s.thinkingDots);
                 EditorGUILayout.LabelField($"Thinking{dots}", body);
             }
 
             EditorGUILayout.Space(2);
         }
 
-        private void DrawInputBar()
+        private void DrawInputBar(ChatSessionData s)
         {
             using (new EditorGUILayout.HorizontalScope())
             {
-                GUI.enabled = !_isWaiting;
-                _input = EditorGUILayout.TextArea(_input, GUILayout.MinHeight(44));
+                GUI.enabled = !s.isWaiting;
+                s.input = EditorGUILayout.TextArea(s.input, GUILayout.MinHeight(44));
 
-                var label = _isWaiting ? "..." : "Send";
+                var label = s.isWaiting ? "..." : "Send";
                 if (GUILayout.Button(label, GUILayout.Width(72), GUILayout.Height(44)))
-                    _ = SendAsync();
+                    _ = SendAsync(s);
                 GUI.enabled = true;
             }
         }
 
-        private async Task SendAsync()
+        private async Task SendAsync(ChatSessionData s)
         {
-            var text = _input.Trim();
+            var text = s.input.Trim();
             if (string.IsNullOrEmpty(text))
                 return;
 
-            _messages.Add(new ChatMessage
+            s.messages.Add(new ChatMessage
             {
                 role = eChatRole.User,
                 text = text,
                 timestamp = DateTime.Now,
             });
-            _input = "";
-            _isWaiting = true;
-            _thinkingStartedAt = EditorApplication.timeSinceStartup;
-            _thinkingDots = 0;
-            _scrollToBottom = true;
+            s.input = "";
+            s.isWaiting = true;
+            s.thinkingStartedAt = EditorApplication.timeSinceStartup;
+            s.thinkingDots = 0;
+            s.scrollToBottom = true;
             Repaint();
 
             try
             {
                 var projectRoot = Path.GetDirectoryName(Application.dataPath);
                 var response = await ClaudeProcess.Send(text, projectRoot);
-                _messages.Add(new ChatMessage
+                s.messages.Add(new ChatMessage
                 {
                     role = eChatRole.Assistant,
                     text = response,
@@ -221,7 +256,7 @@ namespace UniMCP.Editor.Windows
             }
             catch (Exception e)
             {
-                _messages.Add(new ChatMessage
+                s.messages.Add(new ChatMessage
                 {
                     role = eChatRole.System,
                     text = e.Message,
@@ -230,18 +265,10 @@ namespace UniMCP.Editor.Windows
             }
             finally
             {
-                _isWaiting = false;
-                _scrollToBottom = true;
+                s.isWaiting = false;
+                s.scrollToBottom = true;
                 Repaint();
             }
-        }
-
-        private void DrawStatus()
-        {
-            EditorGUILayout.LabelField("Bridge Status", EditorStyles.boldLabel);
-            EditorGUILayout.HelpBox(
-                "HTTP bridge server is not yet implemented. Phase 1 will expose status, port, and recent tool-call logs here.",
-                MessageType.Info);
         }
     }
 }
