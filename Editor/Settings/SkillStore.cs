@@ -25,6 +25,12 @@ namespace UniMCP.Editor.Settings
             return string.IsNullOrEmpty(safe) ? "" : ManagedPrefix + safe;
         }
 
+        public static string GetSkillDirectoryPath(string skillName)
+        {
+            var dir = GetDirName(skillName);
+            return string.IsNullOrEmpty(dir) ? null : Path.Combine(SkillsRoot, dir);
+        }
+
         public static void Sync(IEnumerable<UniMcpSkill> previous, IEnumerable<UniMcpSkill> current)
         {
             Directory.CreateDirectory(SkillsRoot);

@@ -254,6 +254,15 @@ namespace UniMCP.Editor.Windows
                 Repaint();
             }
 
+            if (Event.current.type == EventType.ContextClick
+                && inner.Contains(Event.current.mousePosition))
+            {
+                _selectedSkillIdx = i;
+                _selectedFilePath = SkillMdPath;
+                ShowSkillContextMenu(skill);
+                Event.current.Use();
+            }
+
             var nameStyle = new GUIStyle(EditorStyles.boldLabel)
             {
                 alignment = TextAnchor.MiddleLeft,
@@ -671,6 +680,13 @@ namespace UniMCP.Editor.Windows
             menu.AddItem(new GUIContent("+ New File"), false, () => BeginAddItem(skill, false, parent));
             menu.AddItem(new GUIContent("+ New Folder"), false, () => BeginAddItem(skill, true, parent));
 
+            if (!string.IsNullOrEmpty(path))
+            {
+                menu.AddSeparator("");
+                menu.AddItem(new GUIContent("Reveal in File Explorer"), false,
+                    () => RevealTreeItem(skill, path));
+            }
+
             if (!isPinned && !string.IsNullOrEmpty(path))
             {
                 menu.AddSeparator("");
@@ -683,6 +699,63 @@ namespace UniMCP.Editor.Windows
             }
 
             menu.ShowAsContext();
+        }
+
+        private void ShowSkillContextMenu(UniMcpSkill skill)
+        {
+            var menu = new GenericMenu();
+            menu.AddItem(new GUIContent("Reveal in File Explorer"), false,
+                () => RevealSkill(skill));
+            menu.AddSeparator("");
+            menu.AddItem(new GUIContent("Delete Skill"), false, () =>
+            {
+                var idx = _skillsBuffer.IndexOf(skill);
+                if (idx < 0) return;
+                if (EditorUtility.DisplayDialog(
+                        "Delete Skill",
+                        $"스킬 '{skill.name}'을(를) 삭제합니까?",
+                        "Delete", "Cancel"))
+                {
+                    RemoveSkill(idx);
+                }
+            });
+            menu.ShowAsContext();
+        }
+
+        private void RevealSkill(UniMcpSkill skill)
+        {
+            var dir = SkillStore.GetSkillDirectoryPath(skill.name);
+            if (string.IsNullOrEmpty(dir) || !System.IO.Directory.Exists(dir))
+            {
+                EditorUtility.DisplayDialog(
+                    "Reveal in File Explorer",
+                    "스킬이 아직 디스크에 저장되지 않았습니다. 먼저 Save 하세요.",
+                    "OK");
+                return;
+            }
+            EditorUtility.RevealInFinder(dir);
+        }
+
+        private void RevealTreeItem(UniMcpSkill skill, string relativePath)
+        {
+            var dir = SkillStore.GetSkillDirectoryPath(skill.name);
+            if (string.IsNullOrEmpty(dir) || !System.IO.Directory.Exists(dir))
+            {
+                EditorUtility.DisplayDialog(
+                    "Reveal in File Explorer",
+                    "스킬이 아직 디스크에 저장되지 않았습니다. 먼저 Save 하세요.",
+                    "OK");
+                return;
+            }
+
+            var fullPath = relativePath == SkillMdPath
+                ? System.IO.Path.Combine(dir, "SKILL.md")
+                : System.IO.Path.Combine(dir, relativePath);
+
+            if (System.IO.File.Exists(fullPath) || System.IO.Directory.Exists(fullPath))
+                EditorUtility.RevealInFinder(fullPath);
+            else
+                EditorUtility.RevealInFinder(dir);
         }
 
 
