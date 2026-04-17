@@ -27,22 +27,27 @@ namespace UniMCP.Editor.Windows
         [MenuItem("UniMCP/Skill Executor")]
         private static void Open()
         {
+            GetOrCreateWindow();
+        }
+
+        internal static UniMcpSkillExecutorWindow GetOrCreateWindow()
+        {
             var existing = DockUtil.FindFirstOpen<UniMcpSkillExecutorWindow>();
             if (existing != null)
             {
                 existing.Focus();
-                return;
+                return existing;
             }
 
-            var anchor = (EditorWindow)DockUtil.FindFirstOpen<UniMcpWindow>()
-                      ?? DockUtil.FindFirstOpen<UniMcpSettingsWindow>();
+            EditorWindow anchor = DockUtil.FindFirstOpen<UniMcpWindow>();
+            if (anchor == null) anchor = DockUtil.FindFirstOpen<UniMcpSettingsWindow>();
 
             if (anchor == null)
             {
                 var w = GetWindow<UniMcpSkillExecutorWindow>("Skill Executor");
                 w.minSize = new Vector2(520, 480);
                 w.Show();
-                return;
+                return w;
             }
 
             var window = CreateInstance<UniMcpSkillExecutorWindow>();
@@ -51,6 +56,34 @@ namespace UniMCP.Editor.Windows
 
             if (!DockUtil.TryDockNextTo(anchor, window))
                 window.Show();
+            return window;
+        }
+
+        internal void PresetAndRun(UniMcpSkill skill, IEnumerable<UnityEngine.Object> targets)
+        {
+            _targets.Clear();
+            foreach (var t in targets)
+            {
+                var resolved = ResolveToAsset(t);
+                if (resolved == null) continue;
+                if (!_targets.Contains(resolved))
+                    _targets.Add(resolved);
+            }
+
+            var skills = UniMcpSettings.instance.Skills;
+            for (int i = 0; i < skills.Count; i++)
+            {
+                if (skills[i].name == skill.name)
+                {
+                    _selectedSkillIdx = i;
+                    break;
+                }
+            }
+
+            Focus();
+
+            if (!_isRunning && _targets.Count > 0 && skills.Count > 0)
+                _ = RunAsync();
         }
 
         private void OnEnable()
