@@ -10,6 +10,8 @@ namespace UniMCP.Editor.Windows
 {
     public class UniMcpWindow : EditorWindow
     {
+        private const bool ShowSessionTabs = false;
+
         [SerializeField] private List<ChatSessionData> _sessions = new();
         [SerializeField] private int _activeIdx;
 
@@ -65,8 +67,11 @@ namespace UniMCP.Editor.Windows
 
         private void OnGUI()
         {
-            DrawSessionTabs();
-            EditorGUILayout.Space(4);
+            if (ShowSessionTabs)
+            {
+                DrawSessionTabs();
+                EditorGUILayout.Space(4);
+            }
             DrawChat(Active);
         }
 
