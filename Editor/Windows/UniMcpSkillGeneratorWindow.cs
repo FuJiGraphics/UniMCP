@@ -36,6 +36,7 @@ namespace UniMCP.Editor.Windows
         [SerializeField] private Vector2 _editorScroll;
         [SerializeField] private Vector2 _previewScroll;
         [SerializeField] private string _filter = "";
+        [SerializeField] private string _treeFilter = "";
         [SerializeField] private bool _showPreview;
 
         private string _renameTarget;
@@ -113,8 +114,6 @@ namespace UniMCP.Editor.Windows
                 CommitRename();
             }
 
-            DrawToolbar();
-
             using (new EditorGUILayout.HorizontalScope(GUILayout.ExpandHeight(true)))
             {
                 DrawSkillList();
@@ -144,38 +143,32 @@ namespace UniMCP.Editor.Windows
             }
         }
 
-        private void DrawToolbar()
-        {
-            using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
-            {
-                GUILayout.Label("🔍", GUILayout.Width(18));
-                _filter = EditorGUILayout.TextField(
-                    _filter,
-                    EditorStyles.toolbarSearchField,
-                    GUILayout.MinWidth(140));
-
-                if (!string.IsNullOrEmpty(_filter)
-                    && GUILayout.Button("×", EditorStyles.toolbarButton, GUILayout.Width(22)))
-                {
-                    _filter = "";
-                }
-
-                GUILayout.FlexibleSpace();
-
-                var prevBg = GUI.backgroundColor;
-                GUI.backgroundColor = ColorAccent;
-                if (GUILayout.Button("+ New Skill", EditorStyles.toolbarButton, GUILayout.Width(100)))
-                    AddNewSkill();
-                GUI.backgroundColor = prevBg;
-            }
-        }
-
         private void DrawSkillList()
         {
             using (new EditorGUILayout.VerticalScope(
                        GUILayout.Width(SkillListWidth),
                        GUILayout.ExpandHeight(true)))
             {
+                using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
+                {
+                    _filter = EditorGUILayout.TextField(
+                        _filter,
+                        EditorStyles.toolbarSearchField,
+                        GUILayout.ExpandWidth(true));
+
+                    if (!string.IsNullOrEmpty(_filter)
+                        && GUILayout.Button("×", EditorStyles.toolbarButton, GUILayout.Width(22)))
+                    {
+                        _filter = "";
+                    }
+
+                    var prevBg = GUI.backgroundColor;
+                    GUI.backgroundColor = ColorAccent;
+                    if (GUILayout.Button("+", EditorStyles.toolbarButton, GUILayout.Width(26)))
+                        AddNewSkill();
+                    GUI.backgroundColor = prevBg;
+                }
+
                 var filtered = GetFilteredIndices();
 
                 if (filtered.Count == 0)
@@ -298,7 +291,7 @@ namespace UniMCP.Editor.Windows
 
                 var skill = _skillsBuffer[_selectedSkillIdx];
 
-                DrawTreeHint();
+                DrawTreeFilterHeader();
 
                 _treeScroll = EditorGUILayout.BeginScrollView(_treeScroll, GUILayout.ExpandHeight(true));
 
@@ -314,17 +307,20 @@ namespace UniMCP.Editor.Windows
             }
         }
 
-        private void DrawTreeHint()
+        private void DrawTreeFilterHeader()
         {
             using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
             {
-                var style = new GUIStyle(EditorStyles.miniLabel)
+                _treeFilter = EditorGUILayout.TextField(
+                    _treeFilter,
+                    EditorStyles.toolbarSearchField,
+                    GUILayout.ExpandWidth(true));
+
+                if (!string.IsNullOrEmpty(_treeFilter)
+                    && GUILayout.Button("×", EditorStyles.toolbarButton, GUILayout.Width(22)))
                 {
-                    normal = { textColor = ColorMuted },
-                    alignment = TextAnchor.MiddleLeft,
-                };
-                GUILayout.Label("우클릭 메뉴 · F2 rename · 드래그로 이동", style);
-                GUILayout.FlexibleSpace();
+                    _treeFilter = "";
+                }
             }
         }
 
@@ -341,7 +337,11 @@ namespace UniMCP.Editor.Windows
 
         private void DrawTreeNodeRecursive(TreeNode node, int depth)
         {
-            var expanded = IsExpanded(node.fullPath);
+            if (!NodeMatchesFilter(node))
+                return;
+
+            var filterActive = !string.IsNullOrEmpty(_treeFilter);
+            var expanded = IsExpanded(node.fullPath) || filterActive;
             DrawTreeRow(node.fullPath, node.name, depth, node.isFolder, isPinned: false, expanded);
 
             if (node.isFolder && expanded)
@@ -349,6 +349,23 @@ namespace UniMCP.Editor.Windows
                 foreach (var child in node.children)
                     DrawTreeNodeRecursive(child, depth + 1);
             }
+        }
+
+        private bool NodeMatchesFilter(TreeNode node)
+        {
+            if (string.IsNullOrEmpty(_treeFilter))
+                return true;
+
+            if (node.name.IndexOf(_treeFilter, StringComparison.OrdinalIgnoreCase) >= 0)
+                return true;
+
+            if (node.isFolder)
+            {
+                foreach (var c in node.children)
+                    if (NodeMatchesFilter(c))
+                        return true;
+            }
+            return false;
         }
 
         private void DrawTreeRow(string path, string displayName, int depth, bool isFolder, bool isPinned, bool expanded = false)
