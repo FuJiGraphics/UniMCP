@@ -41,6 +41,17 @@ namespace UniMCP.Editor.Chat
             return output.TrimEnd();
         }
 
+        private const string ScopeSystemPrompt =
+            "You are a Unity project assistant strictly scoped to the Unity project at the current working directory. " +
+            "Hard rules:\n" +
+            "1. Never read, list, write, or access any file or directory outside the working directory (the Unity project root).\n" +
+            "2. Accessible paths are limited to the project's Assets/, Packages/, ProjectSettings/, Library/, UserSettings/ and their subdirectories.\n" +
+            "3. If the user asks about paths like ~, /Users, /home, Desktop, C:/, or any absolute path outside this project, refuse briefly and state the scope limit.\n" +
+            "4. Do not invoke WebFetch or WebSearch.\n" +
+            "5. Treat this Unity project as the only context. Do not reference unrelated projects or external systems.";
+
+        private const string DisallowedTools = "WebFetch,WebSearch";
+
         private static ProcessStartInfo BuildProcessInfo(string prompt, string workingDir)
         {
             var isWin = Application.platform == RuntimePlatform.WindowsEditor;
@@ -55,16 +66,22 @@ namespace UniMCP.Editor.Chat
                 StandardErrorEncoding = Encoding.UTF8,
             };
 
-            var escaped = EscapeArg(prompt);
+            var escapedPrompt = EscapeArg(prompt);
+            var escapedScope = EscapeArg(ScopeSystemPrompt);
+            var claudeArgs =
+                $"-p {escapedPrompt} " +
+                $"--append-system-prompt {escapedScope} " +
+                $"--disallowedTools \"{DisallowedTools}\"";
+
             if (isWin)
             {
                 psi.FileName = "cmd.exe";
-                psi.Arguments = $"/c claude -p {escaped}";
+                psi.Arguments = $"/c claude {claudeArgs}";
             }
             else
             {
                 psi.FileName = "/bin/sh";
-                psi.Arguments = $"-c \"claude -p {escaped}\"";
+                psi.Arguments = $"-c \"claude {claudeArgs.Replace("\"", "\\\"")}\"";
             }
             return psi;
         }
