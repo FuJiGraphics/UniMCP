@@ -13,7 +13,7 @@ namespace UniMCP.Editor.Windows
         private const string SkillMdPath = "SKILL.md";
 
         private static readonly Color ColorAccent         = new(0.40f, 0.80f, 1.00f);
-        private static readonly Color ColorDirty          = new(1.00f, 0.80f, 0.20f);
+        private static readonly Color ColorDirty          = new(1.00f, 0.30f, 0.30f);
         private static readonly Color ColorDanger         = new(0.95f, 0.35f, 0.35f);
         private static readonly Color ColorMuted          = new(0.60f, 0.60f, 0.60f);
         private static readonly Color ColorBgCard         = new(0.18f, 0.18f, 0.20f);
