@@ -1,0 +1,25 @@
+{
+  "name": "com.unimcp.core",
+  "version": "0.0.1",
+  "displayName": "UniMCP",
+  "description": "Unity Editor MCP bridge. Exposes Editor capabilities (prefab inspection, renaming, serialized field manipulation) as MCP tools for AI-assisted workflows with Claude Code and other MCP clients.",
+  "unity": "2022.3",
+  "keywords": [
+    "mcp",
+    "claude",
+    "ai",
+    "editor-tools",
+    "prefab",
+    "convention"
+  ],
+  "author": {
+    "name": "UniMCP Contributors"
+  },
+  "samples": [
+    {
+      "displayName": "Claude Code Skill Templates",
+      "description": "Example Claude Code skills and .mcp.json template for UniMCP.",
+      "path": "Samples~/ClaudeCode"
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "unimcp": {
+      "command": "uvx",
+      "args": ["unimcp"]
+    }
+  }
+}
