@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEditor;
@@ -31,10 +32,13 @@ namespace UniMCP.Editor.Settings
 
         public IReadOnlyList<UniMcpSkill> Skills => _skills;
 
+        public static event Action SkillsChanged;
+
         public void SetSkills(IEnumerable<UniMcpSkill> skills)
         {
             _skills = skills.Select(s => s.Clone()).ToList();
             Save(true);
+            SkillsChanged?.Invoke();
         }
 
         public void ForceSave() => Save(true);
