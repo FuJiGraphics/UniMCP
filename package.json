@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "displayName": "UniMCP",
   "description": "Unity Editor MCP bridge. Exposes Editor capabilities (prefab inspection, renaming, serialized field manipulation) as MCP tools for AI-assisted workflows with Claude Code and other MCP clients.",
-  "unity": "2022.3",
+  "unity": "6000.0",
   "keywords": [
     "mcp",
     "claude",

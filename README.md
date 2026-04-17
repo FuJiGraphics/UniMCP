@@ -29,7 +29,7 @@ AssetDatabase / PrefabUtility / SerializedObject
 
 ## Requirements
 
-- Unity 2022.3 LTS or newer
+- Unity 6 (6000.0) or newer
 - Python 3.10+
 
 ## Installation

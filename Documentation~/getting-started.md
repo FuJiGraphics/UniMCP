@@ -35,10 +35,12 @@
 
 ## Installation (planned)
 
+Requirements: Unity 6 (6000.0) or newer, Python 3.10+.
+
 1. Add this package to `Packages/manifest.json`:
 
 ```json
-"com.unimcp.core": "https://github.com/<owner>/unimcp.git"
+"com.unimcp.core": "https://github.com/FuJiGraphics/UniMCP.git"
 ```
 
 2. In Unity, open `Project Settings → UniMCP` and pick a port (default `7849`).
