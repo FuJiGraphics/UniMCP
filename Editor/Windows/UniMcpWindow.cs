@@ -10,21 +10,33 @@ namespace UniMCP.Editor.Windows
 {
     public class UniMcpWindow : EditorWindow
     {
-        private readonly List<ChatSessionData> _sessions = new();
-        private int _activeIdx;
+        private static int _tabCounter;
 
-        [MenuItem("UniMCP/Open Window")]
-        private static void Open()
+        [SerializeField] private List<ChatMessage> _messages = new();
+        [SerializeField] private string _input = "";
+        [SerializeField] private Vector2 _scroll;
+        [SerializeField] private string _claudeSessionId;
+        [SerializeField] private int _tabNumber;
+
+        private bool _isWaiting;
+        private bool _scrollToBottom;
+        private double _thinkingStartedAt;
+        private int _thinkingDots;
+
+        [MenuItem("UniMCP/New Chat")]
+        private static void OpenNewChat()
         {
-            var window = GetWindow<UniMcpWindow>("UniMCP");
-            window.minSize = new Vector2(480, 420);
+            var window = CreateWindow<UniMcpWindow>();
+            window.AssignTabNumber();
+            window.minSize = new Vector2(420, 360);
             window.Show();
         }
 
         private void OnEnable()
         {
-            if (_sessions.Count == 0)
-                _sessions.Add(NewSession());
+            if (_tabNumber == 0)
+                AssignTabNumber();
+            ApplyTitle();
 
             EditorApplication.update += OnEditorUpdate;
         }
@@ -34,127 +46,70 @@ namespace UniMCP.Editor.Windows
             EditorApplication.update -= OnEditorUpdate;
         }
 
+        private void AssignTabNumber()
+        {
+            _tabCounter++;
+            _tabNumber = _tabCounter;
+            ApplyTitle();
+        }
+
+        private void ApplyTitle()
+        {
+            titleContent = new GUIContent($"UniMCP #{_tabNumber}");
+        }
+
         private void OnEditorUpdate()
         {
-            var s = Active;
-            if (!s.isWaiting)
+            if (!_isWaiting)
                 return;
 
-            var elapsed = EditorApplication.timeSinceStartup - s.thinkingStartedAt;
+            var elapsed = EditorApplication.timeSinceStartup - _thinkingStartedAt;
             var newDots = ((int)(elapsed * 2)) % 4;
-            if (newDots != s.thinkingDots)
+            if (newDots != _thinkingDots)
             {
-                s.thinkingDots = newDots;
+                _thinkingDots = newDots;
                 Repaint();
             }
         }
 
-        private ChatSessionData Active => _sessions[_activeIdx];
-
-        private ChatSessionData NewSession()
-        {
-            var idx = _sessions.Count + 1;
-            return new ChatSessionData { name = $"Session {idx}" };
-        }
-
         private void OnGUI()
         {
-            DrawSessionTabs();
-            EditorGUILayout.Space(4);
-            DrawChat(Active);
+            DrawChat();
         }
 
-        private void DrawSessionTabs()
+        private void DrawChat()
         {
-            int pendingClose = -1;
-            bool addClicked = false;
+            _scroll = EditorGUILayout.BeginScrollView(_scroll);
 
-            using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
-            {
-                for (int i = 0; i < _sessions.Count; i++)
-                {
-                    var selected = i == _activeIdx;
-                    var style = new GUIStyle(EditorStyles.toolbarButton)
-                    {
-                        fontStyle = selected ? FontStyle.Bold : FontStyle.Normal,
-                        alignment = TextAnchor.MiddleLeft,
-                        padding = new RectOffset(8, 4, 0, 0),
-                    };
-
-                    if (GUILayout.Button(_sessions[i].name, style, GUILayout.MinWidth(80)))
-                        _activeIdx = i;
-
-                    var canClose = _sessions.Count > 1;
-                    GUI.enabled = canClose;
-                    if (GUILayout.Button("×", EditorStyles.toolbarButton, GUILayout.Width(20)))
-                        pendingClose = i;
-                    GUI.enabled = true;
-                }
-
-                if (GUILayout.Button("+", EditorStyles.toolbarButton, GUILayout.Width(24)))
-                    addClicked = true;
-
-                GUILayout.FlexibleSpace();
-            }
-
-            if (pendingClose >= 0)
-                CloseSession(pendingClose);
-
-            if (addClicked)
-                AddSession();
-        }
-
-        private void AddSession()
-        {
-            _sessions.Add(NewSession());
-            _activeIdx = _sessions.Count - 1;
-            Repaint();
-        }
-
-        private void CloseSession(int index)
-        {
-            if (_sessions.Count <= 1)
-                return;
-
-            _sessions.RemoveAt(index);
-            if (_activeIdx >= _sessions.Count)
-                _activeIdx = _sessions.Count - 1;
-            else if (index < _activeIdx)
-                _activeIdx--;
-
-            Repaint();
-        }
-
-        private void DrawChat(ChatSessionData s)
-        {
-            s.scroll = EditorGUILayout.BeginScrollView(s.scroll);
-
-            if (s.messages.Count == 0 && !s.isWaiting)
+            if (_messages.Count == 0 && !_isWaiting)
             {
                 EditorGUILayout.Space(40);
                 var hint = new GUIStyle(EditorStyles.centeredGreyMiniLabel) { fontSize = 11 };
                 EditorGUILayout.LabelField(
                     "Start chatting with Claude. First run of `claude` CLI login is required.",
                     hint);
+                EditorGUILayout.LabelField(
+                    "Open another session via UniMCP → New Chat.",
+                    hint);
             }
             else
             {
-                foreach (var m in s.messages)
+                foreach (var m in _messages)
                     DrawMessage(m);
 
-                if (s.isWaiting)
-                    DrawThinking(s);
+                if (_isWaiting)
+                    DrawThinking();
             }
 
-            if (s.scrollToBottom && Event.current.type == EventType.Repaint)
+            if (_scrollToBottom && Event.current.type == EventType.Repaint)
             {
-                s.scroll.y = float.MaxValue;
-                s.scrollToBottom = false;
+                _scroll.y = float.MaxValue;
+                _scrollToBottom = false;
             }
 
             EditorGUILayout.EndScrollView();
 
-            DrawInputBar(s);
+            DrawInputBar();
         }
 
         private void DrawMessage(ChatMessage m)
@@ -188,7 +143,7 @@ namespace UniMCP.Editor.Windows
             EditorGUILayout.Space(2);
         }
 
-        private void DrawThinking(ChatSessionData s)
+        private void DrawThinking()
         {
             using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
             {
@@ -203,70 +158,63 @@ namespace UniMCP.Editor.Windows
                     fontStyle = FontStyle.Italic,
                     normal = { textColor = new Color(0.70f, 0.70f, 0.70f) },
                 };
-                var dots = new string('.', s.thinkingDots);
+                var dots = new string('.', _thinkingDots);
                 EditorGUILayout.LabelField($"Thinking{dots}", body);
             }
 
             EditorGUILayout.Space(2);
         }
 
-        private void DrawInputBar(ChatSessionData s)
+        private void DrawInputBar()
         {
             using (new EditorGUILayout.HorizontalScope())
             {
-                GUI.enabled = !s.isWaiting;
-                s.input = EditorGUILayout.TextArea(s.input, GUILayout.MinHeight(44));
+                GUI.enabled = !_isWaiting;
+                _input = EditorGUILayout.TextArea(_input, GUILayout.MinHeight(44));
 
-                var label = s.isWaiting ? "..." : "Send";
+                var label = _isWaiting ? "..." : "Send";
                 if (GUILayout.Button(label, GUILayout.Width(72), GUILayout.Height(44)))
-                    _ = SendAsync(s);
+                    _ = SendAsync();
                 GUI.enabled = true;
             }
         }
 
-        private async Task SendAsync(ChatSessionData s)
+        private async Task SendAsync()
         {
-            var text = s.input.Trim();
+            var text = _input.Trim();
             if (string.IsNullOrEmpty(text))
                 return;
 
-            s.messages.Add(new ChatMessage
-            {
-                role = eChatRole.User,
-                text = text,
-                timestamp = DateTime.Now,
-            });
-            s.input = "";
-            s.isWaiting = true;
-            s.thinkingStartedAt = EditorApplication.timeSinceStartup;
-            s.thinkingDots = 0;
-            s.scrollToBottom = true;
+            _messages.Add(new ChatMessage { role = eChatRole.User, text = text });
+            _input = "";
+            _isWaiting = true;
+            _thinkingStartedAt = EditorApplication.timeSinceStartup;
+            _thinkingDots = 0;
+            _scrollToBottom = true;
             Repaint();
 
             try
             {
                 var projectRoot = Path.GetDirectoryName(Application.dataPath);
-                var response = await ClaudeProcess.Send(text, projectRoot);
-                s.messages.Add(new ChatMessage
+                var response = await ClaudeProcess.Send(text, projectRoot, _claudeSessionId);
+
+                if (!string.IsNullOrEmpty(response.session_id))
+                    _claudeSessionId = response.session_id;
+
+                _messages.Add(new ChatMessage
                 {
                     role = eChatRole.Assistant,
-                    text = response,
-                    timestamp = DateTime.Now,
+                    text = response.result ?? "",
                 });
             }
             catch (Exception e)
             {
-                s.messages.Add(new ChatMessage
-                {
-                    role = eChatRole.System,
-                    text = e.Message,
-                    timestamp = DateTime.Now,
-                });
+                _messages.Add(new ChatMessage { role = eChatRole.System, text = e.Message });
             }
             finally
             {
-                s.isWaiting = false;
-                s.scrollToBottom = true;
+                _isWaiting = false;
+                _scrollToBottom = true;
                 Repaint();
             }
         }

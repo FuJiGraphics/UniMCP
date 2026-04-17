@@ -1,5 +1,3 @@
-using System;
-
 namespace UniMCP.Editor.Chat
 {
     public enum eChatRole
@@ -9,10 +7,10 @@ namespace UniMCP.Editor.Chat
         System,
     }
 
+    [System.Serializable]
     public class ChatMessage
     {
         public eChatRole role;
         public string text;
-        public DateTime timestamp;
     }
 }

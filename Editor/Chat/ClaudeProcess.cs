@@ -2,19 +2,33 @@ using System;
 using System.Diagnostics;
 using System.Text;
 using System.Threading.Tasks;
+using UnityEditor;
 using UnityEngine;
 
 namespace UniMCP.Editor.Chat
 {
+    [System.Serializable]
+    public class ClaudeResponse
+    {
+        public string type;
+        public string subtype;
+        public string session_id;
+        public string result;
+        public bool is_error;
+    }
+
     /// <summary>
     /// Claude Code CLI 서브프로세스 실행기.
-    /// 단일 턴 전송 후 stdout을 텍스트로 수집한다
+    /// `--output-format json`으로 session_id와 응답 텍스트를 함께 수신하고 이후 호출은 `--resume`으로 컨텍스트 이어감
     /// </summary>
     public static class ClaudeProcess
     {
-        public static async Task<string> Send(string prompt, string workingDir)
+        public static async Task<ClaudeResponse> Send(
+            string prompt,
+            string workingDir,
+            string resumeSessionId = null)
         {
-            var psi = BuildProcessInfo(prompt, workingDir);
+            var psi = BuildProcessInfo(prompt, workingDir, resumeSessionId);
             using var process = new Process { StartInfo = psi };
 
             try
@@ -24,8 +38,7 @@ namespace UniMCP.Editor.Chat
             catch (Exception e)
             {
                 throw new InvalidOperationException(
-                    "Failed to launch Claude Code CLI. " +
-                    "Ensure `claude` is installed and on PATH.\n" + e.Message, e);
+                    "Failed to launch Claude Code CLI. Ensure `claude` is installed and on PATH.\n" + e.Message, e);
             }
 
             var outputTask = process.StandardOutput.ReadToEndAsync();
@@ -38,7 +51,26 @@ namespace UniMCP.Editor.Chat
                 throw new InvalidOperationException(
                     $"claude exited with code {process.ExitCode}.\n{error.Trim()}");
 
-            return output.TrimEnd();
+            var trimmed = output.Trim();
+            if (string.IsNullOrEmpty(trimmed))
+                throw new InvalidOperationException("claude returned empty output.\n" + error.Trim());
+
+            ClaudeResponse parsed;
+            try { parsed = JsonUtility.FromJson<ClaudeResponse>(trimmed); }
+            catch (Exception e)
+            {
+                throw new InvalidOperationException(
+                    "Failed to parse Claude response JSON.\n" + e.Message +
+                    "\nRaw output (truncated): " + Trunc(trimmed, 300), e);
+            }
+
+            if (parsed == null)
+                throw new InvalidOperationException("Parsed Claude response is null.\nRaw: " + Trunc(trimmed, 300));
+
+            if (parsed.is_error)
+                throw new InvalidOperationException("Claude reported an error: " + (parsed.result ?? parsed.subtype ?? "unknown"));
+
+            return parsed;
         }
 
         private const string ScopeSystemPrompt =
@@ -52,7 +84,7 @@ namespace UniMCP.Editor.Chat
 
         private const string DisallowedTools = "WebFetch,WebSearch";
 
-        private static ProcessStartInfo BuildProcessInfo(string prompt, string workingDir)
+        private static ProcessStartInfo BuildProcessInfo(string prompt, string workingDir, string resumeId)
         {
             var isWin = Application.platform == RuntimePlatform.WindowsEditor;
             var psi = new ProcessStartInfo
@@ -73,11 +105,17 @@ namespace UniMCP.Editor.Chat
             foreach (var dir in ManifestResolver.GetExternalPackageDirs(workingDir))
                 addDirParts.Append(" --add-dir ").Append(EscapeArg(dir));
 
+            var resumePart = string.IsNullOrEmpty(resumeId)
+                ? ""
+                : $" --resume {EscapeArg(resumeId)}";
+
             var claudeArgs =
                 $"-p {escapedPrompt} " +
+                $"--output-format json " +
                 $"--append-system-prompt {escapedScope} " +
                 $"--disallowedTools \"{DisallowedTools}\"" +
-                addDirParts;
+                addDirParts +
+                resumePart;
 
             if (isWin)
             {
@@ -95,6 +133,11 @@ namespace UniMCP.Editor.Chat
         private static string EscapeArg(string s)
         {
             return "\"" + s.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
+        }
+
+        private static string Trunc(string s, int max)
+        {
+            return s.Length <= max ? s : s.Substring(0, max) + "…";
         }
     }
 }
