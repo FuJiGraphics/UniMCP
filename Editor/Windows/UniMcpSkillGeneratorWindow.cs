@@ -108,6 +108,8 @@ namespace UniMCP.Editor.Windows
         {
             HandleGlobalShortcuts();
 
+            TrackRenameFocus();
+
             if (_pendingRenameCommit && Event.current.type == EventType.Layout)
             {
                 _pendingRenameCommit = false;
@@ -124,6 +126,28 @@ namespace UniMCP.Editor.Windows
             }
 
             DrawStatusBar();
+        }
+
+        private void TrackRenameFocus()
+        {
+            if (_renameTarget == null)
+                return;
+            if (_renameFocusPending)
+                return;
+            if (Event.current.type != EventType.Repaint)
+                return;
+
+            var focused = GUI.GetNameOfFocusedControl();
+            if (!_renameFocusArmed)
+            {
+                if (focused == "RenameField")
+                    _renameFocusArmed = true;
+            }
+            else if (focused != "RenameField")
+            {
+                _pendingRenameCommit = true;
+                Repaint();
+            }
         }
 
         private void HandleGlobalShortcuts()
@@ -427,20 +451,6 @@ namespace UniMCP.Editor.Windows
                     }
                 }
 
-                if (Event.current.type == EventType.Repaint && !_renameFocusPending)
-                {
-                    var focused = GUI.GetNameOfFocusedControl();
-                    if (!_renameFocusArmed)
-                    {
-                        if (focused == "RenameField")
-                            _renameFocusArmed = true;
-                    }
-                    else if (focused != "RenameField")
-                    {
-                        _pendingRenameCommit = true;
-                        Repaint();
-                    }
-                }
             }
             else
             {
