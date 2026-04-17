@@ -12,9 +12,28 @@ namespace UniMCP.Editor.Windows
         [MenuItem("UniMCP/Settings")]
         private static void Open()
         {
-            var window = GetWindow<UniMcpSettingsWindow>("UniMCP Settings");
+            var existing = DockUtil.FindFirstOpen<UniMcpSettingsWindow>();
+            if (existing != null)
+            {
+                existing.Focus();
+                return;
+            }
+
+            var chat = DockUtil.FindFirstOpen<UniMcpWindow>();
+            if (chat == null)
+            {
+                var w = GetWindow<UniMcpSettingsWindow>("UniMCP Settings");
+                w.minSize = new Vector2(520, 460);
+                w.Show();
+                return;
+            }
+
+            var window = CreateInstance<UniMcpSettingsWindow>();
+            window.titleContent = new GUIContent("UniMCP Settings");
             window.minSize = new Vector2(520, 460);
-            window.Show();
+
+            if (!DockUtil.TryDockNextTo(chat, window))
+                window.Show();
         }
 
         private void OnEnable()

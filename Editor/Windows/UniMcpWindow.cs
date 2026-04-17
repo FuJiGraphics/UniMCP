@@ -18,9 +18,28 @@ namespace UniMCP.Editor.Windows
         [MenuItem("UniMCP/Open Window")]
         private static void Open()
         {
-            var window = GetWindow<UniMcpWindow>("UniMCP");
+            var existing = DockUtil.FindFirstOpen<UniMcpWindow>();
+            if (existing != null)
+            {
+                existing.Focus();
+                return;
+            }
+
+            var settings = DockUtil.FindFirstOpen<UniMcpSettingsWindow>();
+            if (settings == null)
+            {
+                var w = GetWindow<UniMcpWindow>("UniMCP");
+                w.minSize = new Vector2(460, 400);
+                w.Show();
+                return;
+            }
+
+            var window = CreateInstance<UniMcpWindow>();
+            window.titleContent = new GUIContent("UniMCP");
             window.minSize = new Vector2(460, 400);
-            window.Show();
+
+            if (!DockUtil.TryDockNextTo(settings, window))
+                window.Show();
         }
 
         private void OnEnable()
