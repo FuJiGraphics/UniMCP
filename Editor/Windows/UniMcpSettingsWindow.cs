@@ -1,6 +1,5 @@
 using System;
 using System.Diagnostics;
-using System.IO;
 using UniMCP.Editor.Logging;
 using UniMCP.Editor.Settings;
 using UnityEditor;
@@ -11,6 +10,7 @@ namespace UniMCP.Editor.Windows
     public class UniMcpSettingsWindow : EditorWindow
     {
         private int _maxConcurrentBuffer;
+        private Vector2 _scroll;
 
         [MenuItem("UniMCP/Settings")]
         private static void Open()
@@ -48,10 +48,26 @@ namespace UniMCP.Editor.Windows
 
         private void OnGUI()
         {
+            _scroll = EditorGUILayout.BeginScrollView(_scroll);
             DrawHeader();
             DrawExecutionSettings();
             EditorGUILayout.Space(16);
             DrawToolchain();
+            EditorGUILayout.Space(16);
+            DrawResetSection();
+            EditorGUILayout.EndScrollView();
+        }
+
+        // ---- Reset Section ----
+
+        private void DrawResetSection()
+        {
+            EditorGUILayout.LabelField("Reset / Maintenance", EditorStyles.boldLabel);
+
+            if (GUILayout.Button("Reset Run Queue", GUILayout.Height(22)))
+            {
+                UniMcpRunQueue.ResetQueuePublic();
+            }
         }
 
         private void DrawHeader()

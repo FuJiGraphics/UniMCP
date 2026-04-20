@@ -72,6 +72,33 @@ node ../UniMCP/Tools~/rename_nested.js \
 
 ---
 
+### prefab_hook.js
+
+Unity UI 프리팹 조작 훅의 CLI 디스패처. 명령을 파일 큐로 Unity Editor 에 전달하고 응답을 폴링한다.
+
+**사용:**
+```bash
+node ../UniMCP/Tools~/prefab_hook.js <op> [--key value ...]
+```
+
+**대표 op:**
+- 세션: `create-prefab` / `open-prefab` / `save-prefab` / `cancel-prefab`
+- 계층: `add-child` / `add-nested-prefab` / `delete` / `rename` / `reparent` / `set-active`
+- RectTransform: `set-rect` / `set-anchor` / `set-pivot` / `set-rotation` / `set-scale`
+- 그래픽: `add-image` / `add-raw-image` / `add-tmp` (+ 각 `set-*` 세터)
+- 인터랙션: `add-button` / `add-toggle` / `add-slider` / `add-scroll-rect` / `add-dropdown` / `add-tmp-input-field` 등
+- 레이아웃: `add-horizontal-layout` / `add-vertical-layout` / `add-grid-layout` / `add-layout-element` / `add-content-size-fitter` / `add-aspect-ratio-fitter`
+- 캔버스/마스크/이펙트: `add-canvas` / `add-canvas-group` / `add-mask` / `add-rect-mask-2d` / `add-shadow` / `add-outline`
+- 제네릭/조회: `add-component` / `list-children` / `get-rect` / `exists`
+
+전체 레퍼런스는 `.claude/skills/unimcp-builtin-prefab-gen/hooks.md` (Editor 로드 시 자동 설치).
+
+**종속성:** Unity Editor 가 실행 중이어야 한다. `PrefabHookExecutor` 가 `Library/UniMCP/PrefabHook/cmd/` 를 폴링해 처리한다.
+
+**종료 코드:** 0=ok, 1=fail, 2=timeout (기본 30s, `--timeout <sec>` 조정)
+
+---
+
 ## 도구 추가 시 가이드
 
 1. `Tools~/<name>.py` 에 스크립트 추가

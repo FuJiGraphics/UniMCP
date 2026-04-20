@@ -33,9 +33,10 @@ namespace UniMCP.Editor.Chat
             string workingDir,
             string resumeSessionId = null,
             Action<string> onProgress = null,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            string modelOverride = null)
         {
-            var psi = BuildProcessInfo(prompt, workingDir, resumeSessionId);
+            var psi = BuildProcessInfo(prompt, workingDir, resumeSessionId, modelOverride);
             using var process = new Process { StartInfo = psi };
 
             var startTime = DateTime.Now;
@@ -277,7 +278,7 @@ namespace UniMCP.Editor.Chat
             return null;
         }
 
-        private static ProcessStartInfo BuildProcessInfo(string prompt, string workingDir, string resumeId)
+        private static ProcessStartInfo BuildProcessInfo(string prompt, string workingDir, string resumeId, string modelOverride = null)
         {
             var isWin = Application.platform == RuntimePlatform.WindowsEditor;
             var psi = new ProcessStartInfo
@@ -302,9 +303,10 @@ namespace UniMCP.Editor.Chat
                 ? ""
                 : $" --resume {EscapeArg(resumeId)}";
 
+            var model = string.IsNullOrEmpty(modelOverride) ? "sonnet" : modelOverride;
             var claudeArgs =
                 $"-p {escapedPrompt} " +
-                $"--model sonnet " +
+                $"--model {model} " +
                 $"--output-format stream-json " +
                 $"--verbose " +
                 $"--append-system-prompt {escapedScope} " +

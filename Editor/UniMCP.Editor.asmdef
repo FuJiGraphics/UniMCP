@@ -1,7 +1,9 @@
 {
     "name": "UniMCP.Editor",
     "rootNamespace": "UniMCP.Editor",
-    "references": [],
+    "references": [
+        "Unity.TextMeshPro"
+    ],
     "includePlatforms": [
         "Editor"
     ],

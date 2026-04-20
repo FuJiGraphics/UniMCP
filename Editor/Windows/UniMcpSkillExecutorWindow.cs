@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using UniMCP.Editor.Chat;
+using UniMCP.Editor.PrefabHook;
 using UniMCP.Editor.Settings;
 using UnityEditor;
 using UnityEngine;
@@ -122,12 +123,12 @@ namespace UniMCP.Editor.Windows
 
         private void DrawSkillPicker()
         {
-            var skills = UniMcpSettings.instance.Skills;
+            var skills = GetAllSkills();
 
             if (skills.Count == 0)
             {
                 EditorGUILayout.HelpBox(
-                    "정의된 스킬이 없습니다. UniMCP → Settings → Skills 에서 먼저 스킬을 만드세요.",
+                    "사용 가능한 스킬이 없습니다.",
                     MessageType.Warning);
                 return;
             }
@@ -136,6 +137,11 @@ namespace UniMCP.Editor.Windows
             _selectedSkillIdx = Mathf.Clamp(_selectedSkillIdx, 0, names.Length - 1);
             _selectedSkillIdx = EditorGUILayout.Popup("Skill", _selectedSkillIdx, names);
         }
+
+        private static List<UniMcpSkill> GetAllSkills() =>
+            BuiltinSkills.GetAll()
+                .Concat(UniMcpSettings.instance.Skills)
+                .ToList();
 
         private void DrawTargets()
         {
@@ -268,7 +274,7 @@ namespace UniMCP.Editor.Windows
 
         private void DrawRunBar()
         {
-            var skills = UniMcpSettings.instance.Skills;
+            var skills = GetAllSkills();
             var canRun = !_isRunning
                 && skills.Count > 0
                 && _targets.Count > 0;
@@ -345,7 +351,7 @@ namespace UniMCP.Editor.Windows
 
         private void TriggerRun()
         {
-            var skills = UniMcpSettings.instance.Skills;
+            var skills = GetAllSkills();
             if (skills.Count == 0 || _targets.Count == 0 || _isRunning)
                 return;
 
@@ -379,7 +385,8 @@ namespace UniMCP.Editor.Windows
                 {
                     _result = "Error: " + ex.Message;
                     OnMyJobDone();
-                });
+                },
+                isBuiltin: BuiltinSkills.IsBuiltin(skill.name));
         }
 
         private void OnMyJobDone()

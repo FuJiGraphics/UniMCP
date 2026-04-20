@@ -36,6 +36,23 @@ namespace UniMCP.Editor.Windows
         public CancellationTokenSource cts;
         public Action<ClaudeResponse> onSuccess;
         public Action<Exception> onFailure;
+        /// <summary>
+        /// true 면 `/skill` 슬래시 커맨드 대신 `skill.prompt` 를 사용자 메시지로 직접 전달.
+        /// UniMCP 패키지 내장 스킬용 (프로젝트 `.claude/skills` 에 파일을 쓰지 않는다)
+        /// </summary>
+        public bool isBuiltin;
+
+        /// <summary>
+        /// 작업 단위 로그 파일 경로. 세팅되면 시작·진행·완료 이벤트를 여기 append.
+        /// 비어있으면 파일 로그 미기록
+        /// </summary>
+        public string logPath;
+
+        /// <summary>
+        /// Claude 모델 오버라이드. 비어있으면 기본(sonnet).
+        /// 복잡한 추론이 필요한 빌트인(예: 프리팹 생성)은 "opus" 로 지정
+        /// </summary>
+        public string modelOverride;
     }
 
     /// <summary>
@@ -62,7 +79,10 @@ namespace UniMCP.Editor.Windows
             UniMcpSkill skill,
             IEnumerable<string> targetPaths,
             Action<ClaudeResponse> onSuccess = null,
-            Action<Exception> onFailure = null)
+            Action<Exception> onFailure = null,
+            bool isBuiltin = false,
+            string logPath = null,
+            string modelOverride = null)
         {
             if (skill == null)
                 return Guid.Empty;
@@ -82,6 +102,9 @@ namespace UniMCP.Editor.Windows
                 cts = new CancellationTokenSource(),
                 onSuccess = onSuccess,
                 onFailure = onFailure,
+                isBuiltin = isBuiltin,
+                logPath = logPath,
+                modelOverride = modelOverride,
             };
 
             _pending.Add(job);
@@ -198,6 +221,11 @@ namespace UniMCP.Editor.Windows
 
             UniMcpLogger.Info($"시작: {job.skill.name} | targets={string.Join(", ", job.targets)}");
 
+            WriteJobLogHeader(job);
+            PrefabHook.PrefabHookExecutor.ActiveLogPath = job.logPath;
+            PrefabHook.PrefabHookExecutor.ResetHookCounter();
+            UniMcpLogger.ActiveLogPath = job.logPath;
+
             OpenTasksWindow();
 
             try
@@ -210,6 +238,7 @@ namespace UniMCP.Editor.Windows
                     progressText =>
                     {
                         job.progressText = progressText;
+                        AppendJobLog(job, "PROGRESS  " + progressText);
                         EditorApplication.delayCall += () =>
                         {
                             try
@@ -221,11 +250,16 @@ namespace UniMCP.Editor.Windows
                             QueueChanged?.Invoke();
                         };
                     },
-                    job.cts.Token);
+                    job.cts.Token,
+                    modelOverride: job.modelOverride);
 
                 job.state = JobState.Success;
                 job.finishedAt = DateTime.Now;
                 job.resultText = response.result ?? "";
+
+                AppendJobLog(job, $"JOB END success ({(job.finishedAt - job.startedAt)?.TotalSeconds:F1}s)");
+                if (!string.IsNullOrWhiteSpace(response.result))
+                    AppendJobLog(job, "RESULT\n" + response.result);
 
                 // 스킬이 프리팹을 외부에서 수정했을 수 있으니 타겟 강제 리임포트
                 foreach (var target in job.targets)
@@ -250,6 +284,7 @@ namespace UniMCP.Editor.Windows
                 job.state = JobState.Cancelled;
                 job.finishedAt = DateTime.Now;
                 UniMcpLogger.Info($"{job.skill.name} 취소됨");
+                AppendJobLog(job, "JOB END cancelled");
                 Progress.Finish(job.progressId, Progress.Status.Canceled);
             }
             catch (Exception e)
@@ -258,9 +293,15 @@ namespace UniMCP.Editor.Windows
                 job.finishedAt = DateTime.Now;
                 job.errorMessage = e.Message;
                 UniMcpLogger.Error($"{job.skill.name} 실패: {e.Message}");
+                AppendJobLog(job, "JOB END failed: " + e.Message);
                 Progress.Finish(job.progressId, Progress.Status.Failed);
                 SafeInvoke(() => job.onFailure?.Invoke(e));
             }
+
+            if (PrefabHook.PrefabHookExecutor.ActiveLogPath == job.logPath)
+                PrefabHook.PrefabHookExecutor.ActiveLogPath = null;
+            if (UniMcpLogger.ActiveLogPath == job.logPath)
+                UniMcpLogger.ActiveLogPath = null;
 
             _running.Remove(job);
             QueueChanged?.Invoke();
@@ -271,6 +312,35 @@ namespace UniMCP.Editor.Windows
                 AssetDatabase.Refresh();
         }
 
+        private static void WriteJobLogHeader(JobRecord job)
+        {
+            if (string.IsNullOrEmpty(job.logPath)) return;
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(job.logPath));
+                var header =
+                    $"====================================================\n" +
+                    $"JOB    {job.id}\n" +
+                    $"SKILL  {job.skill.name}" + (job.isBuiltin ? " (builtin)" : "") + "\n" +
+                    $"START  {job.startedAt:yyyy-MM-dd HH:mm:ss}\n" +
+                    $"TARGETS\n" +
+                    string.Join("", job.targets.Select(t => $"  - {t}\n")) +
+                    $"====================================================\n";
+                File.WriteAllText(job.logPath, header);
+            }
+            catch (Exception e) { UniMcpLogger.Warn("로그 헤더 기록 실패: " + e.Message); }
+        }
+
+        private static void AppendJobLog(JobRecord job, string line)
+        {
+            if (string.IsNullOrEmpty(job.logPath)) return;
+            try
+            {
+                File.AppendAllText(job.logPath, $"[{DateTime.Now:HH:mm:ss}] {line}\n");
+            }
+            catch { }
+        }
+
         [MenuItem("UniMCP/Background Tasks")]
         private static void OpenTasksMenu()
         {
@@ -278,9 +348,11 @@ namespace UniMCP.Editor.Windows
         }
 
         /// <summary>
-        /// 큐 상태가 꼬였을 때 (좀비 _running, 오래 중단된 작업 등) 강제로 전부 정리
+        /// 큐 상태가 꼬였을 때 (좀비 _running, 오래 중단된 작업 등) 강제로 전부 정리.
+        /// Settings UI 에서 호출
         /// </summary>
-        [MenuItem("UniMCP/Reset Run Queue")]
+        public static void ResetQueuePublic() => ResetQueueMenu();
+
         private static void ResetQueueMenu()
         {
             foreach (var job in _running)
